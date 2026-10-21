@@ -21,6 +21,7 @@ import yaml
 from packages.core.confirmation import ConfirmationStatus, ConfirmationStore
 from packages.core.decisions import ActionType, Decision, Reason
 from packages.core.models import (
+    BOOKING_CLASSES,
     AppointmentBooking,
     BookingEvent,
     BookingStatus,
@@ -28,6 +29,8 @@ from packages.core.models import (
     CalendarEvent,
     FlightBooking,
     HotelBooking,
+    RestaurantBooking,
+    RideBooking,
     Source,
     TrainBooking,
 )
@@ -38,18 +41,15 @@ from packages.sync_agent.reconciliation import ReconciliationEngine, decide
 SCENARIO_DIR = Path(__file__).resolve().parents[2] / "data" / "scenarios"
 DEFAULT_NOW = datetime(2026, 8, 18, 8, 0)
 
-_BOOKING_CLASSES = {
-    BookingType.FLIGHT: FlightBooking,
-    BookingType.TRAIN: TrainBooking,
-    BookingType.HOTEL: HotelBooking,
-    BookingType.APPOINTMENT: AppointmentBooking,
-}
+_BOOKING_CLASSES = BOOKING_CLASSES
 
 _SUBTYPE_FIELDS = {
     FlightBooking: {"flight_number", "departure_airport", "arrival_airport"},
     TrainBooking: {"train_number", "departure_station", "arrival_station"},
     HotelBooking: {"hotel_name", "nights"},
     AppointmentBooking: {"provider"},
+    RideBooking: {"pickup", "dropoff", "provider"},
+    RestaurantBooking: {"venue", "party_size"},
 }
 
 

@@ -4,6 +4,10 @@ Corrections applied against the StarUML export (see docs/diagram-corrections.md)
   * ``booking_ref`` and ``source`` added to BookingEvent: reconciliation matching
     (FR3) and idempotency (NFR2) are both unreliable without a vendor reference.
   * TrainBooking / HotelBooking added — SRS 1.4 names four booking types.
+  * RideBooking / RestaurantBooking added for the app: a scheduled cab (Uber
+    Reserve, Ola) and a table reservation (Swiggy Dineout, Zomato) are the two
+    non-travel bookings that genuinely belong on a calendar. Ordinary food or
+    ride *orders* do not -- they are over before a calendar could help.
 """
 
 from __future__ import annotations
@@ -18,6 +22,8 @@ class BookingType(str, Enum):
     TRAIN = "train"
     HOTEL = "hotel"
     APPOINTMENT = "appointment"
+    RIDE = "ride"
+    RESTAURANT = "restaurant"
 
 
 class BookingStatus(str, Enum):
@@ -113,3 +119,28 @@ class HotelBooking(BookingEvent):
 @dataclass(frozen=True)
 class AppointmentBooking(BookingEvent):
     provider: str | None = None
+
+
+@dataclass(frozen=True)
+class RideBooking(BookingEvent):
+    pickup: str | None = None
+    dropoff: str | None = None
+    provider: str | None = None
+
+
+@dataclass(frozen=True)
+class RestaurantBooking(BookingEvent):
+    venue: str | None = None
+    party_size: int | None = None
+
+
+#: One registry, so the agent, the scenario runner and the app cannot disagree
+#: about which subclass a booking type builds.
+BOOKING_CLASSES: dict[BookingType, type[BookingEvent]] = {
+    BookingType.FLIGHT: FlightBooking,
+    BookingType.TRAIN: TrainBooking,
+    BookingType.HOTEL: HotelBooking,
+    BookingType.APPOINTMENT: AppointmentBooking,
+    BookingType.RIDE: RideBooking,
+    BookingType.RESTAURANT: RestaurantBooking,
+}

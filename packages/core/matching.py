@@ -22,7 +22,10 @@ from .models import BookingEvent, CalendarEvent
 #: moved in time, rather than two separate bookings.
 RESCHEDULE_WINDOW = timedelta(hours=36)
 
-_STOPWORDS = {"flight", "train", "hotel", "appointment", "to", "from", "the", "at", "with", "my"}
+_STOPWORDS = {
+    "flight", "train", "hotel", "appointment", "ride", "cab", "table", "restaurant",
+    "to", "from", "the", "at", "with", "my",
+}
 
 
 def _tokens(text: str | None) -> set[str]:

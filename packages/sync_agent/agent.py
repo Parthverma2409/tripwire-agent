@@ -18,15 +18,12 @@ from packages.core.confirmation import ConfirmationRequest, ConfirmationStatus, 
 from packages.core.decisions import ActionType, Decision, Reason
 from packages.core.matching import find_by_phrase
 from packages.core.models import (
-    AppointmentBooking,
+    BOOKING_CLASSES,
     BookingEvent,
     BookingStatus,
     BookingType,
     CalendarEvent,
-    FlightBooking,
-    HotelBooking,
     Source,
-    TrainBooking,
     Traveller,
 )
 from packages.nlp.baseline import BaselineExtractor
@@ -44,12 +41,14 @@ from packages.sync_agent.activation import (
 )
 from packages.sync_agent.reconciliation import ReconciliationEngine, decide
 
-_BOOKING_CLASSES = {
-    BookingType.FLIGHT: FlightBooking,
-    BookingType.TRAIN: TrainBooking,
-    BookingType.HOTEL: HotelBooking,
-    BookingType.APPOINTMENT: AppointmentBooking,
-}
+_BOOKING_CLASSES = BOOKING_CLASSES
+
+#: Spoken words for the two app-only types. Checked before the enum values, so
+#: "book a cab" is a ride and not -- as the old fallback would have it -- a flight.
+_TYPE_WORDS: list[tuple[BookingType, tuple[str, ...]]] = [
+    (BookingType.RIDE, ("cab", "taxi", "ride", "uber", "ola")),
+    (BookingType.RESTAURANT, ("table", "restaurant", "dinner", "lunch", "dineout")),
+]
 
 _INTENT_STATUS = {
     Intent.CREATE_BOOKING: BookingStatus.CONFIRMED,
@@ -448,6 +447,9 @@ def _summarise(events: list[CalendarEvent]) -> str:
 
 def _type_from(slots: dict) -> BookingType:
     raw = (slots.get("booking_type") or "").lower()
+    for booking_type, words in _TYPE_WORDS:
+        if any(word in raw for word in words):
+            return booking_type
     for booking_type in BookingType:
         if booking_type.value in raw:
             return booking_type

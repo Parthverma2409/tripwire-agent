@@ -73,6 +73,11 @@ _TIME_PATTERNS = [
     re.compile(r"\b(?:early morning|late evening|noon|midnight|morning|afternoon|evening)\b", re.I),
 ]
 
+#: App-only booking-type words (rides, tables). Deliberately NOT in the D1
+#: lexicon: adding them there would resample the NLU dataset and move every
+#: published score, for words the held-out set never contains anyway.
+_APP_BOOKING_TYPES = ["cab", "taxi", "ride", "table", "restaurant"]
+
 _BOOKING_REF = re.compile(r"\b[A-Z0-9]{2,6}-[A-Z0-9]{2,6}\b")
 _PARTY_SIZE = re.compile(r"\b(?:for\s+)?(one|two|three|four|five|a couple of|\d+)\s+people\b", re.I)
 
@@ -83,7 +88,7 @@ class BaselineExtractor:
     def __init__(self, lexicon_path: Path | None = None):
         lex = load_lexicon(lexicon_path)
         self.cities = sorted(lex["city"], key=len, reverse=True)
-        self.booking_types = sorted(lex["booking_type"], key=len, reverse=True)
+        self.booking_types = sorted(lex["booking_type"] + _APP_BOOKING_TYPES, key=len, reverse=True)
         self.dates = sorted(lex["date"], key=len, reverse=True)
         self.times = sorted(lex["time"], key=len, reverse=True)
         self.providers = sorted(lex["provider"], key=len, reverse=True)

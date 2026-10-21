@@ -39,6 +39,9 @@ _TYPE_RULES: list[tuple[BookingType, re.Pattern]] = [
     (BookingType.TRAIN, re.compile(r"\b(train|rail|irctc|coach)\b", re.I)),
     (BookingType.HOTEL, re.compile(r"\b(hotel|check-?in|room|nights?)\b", re.I)),
     (BookingType.APPOINTMENT, re.compile(r"\b(appointment|clinic|consultation|doctor|dr\.?)\b", re.I)),
+    # Last, so a flight email that mentions an "airport cab" stays a flight.
+    (BookingType.RIDE, re.compile(r"\b(cab|taxi|ride|pickup|pick-up|driver)\b", re.I)),
+    (BookingType.RESTAURANT, re.compile(r"\b(table|restaurant|dineout|dining)\b", re.I)),
 ]
 
 # The label is matched case-insensitively; the reference itself is NOT. Under a
