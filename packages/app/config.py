@@ -76,6 +76,15 @@ class Settings:
     #: speech recognition, which sends audio to Google / Microsoft.
     whisper_model: str = ""
 
+    #: Tell the user (Telegram, desktop notification) every time the calendar
+    #: actually changes -- not only when a question needs an answer.
+    notify_changes: bool = True
+
+    #: Where Swiggy Dineout searches and books: an area and its PIN code,
+    #: turned into coordinates once through Swiggy's own geocoder.
+    dining_area: str = ""
+    dining_pin: str = ""
+
     #: Optional; normally the passphrase lives in the OS keyring (secrets.py).
     token_passphrase: str = field(default="", repr=False)
 
@@ -94,6 +103,14 @@ class Settings:
     @property
     def token_path(self) -> Path:
         return self.home / "google-token.json"
+
+    @property
+    def swiggy_token_path(self) -> Path:
+        return self.home / "swiggy-token.json"
+
+    @property
+    def swiggy_redirect_uri(self) -> str:
+        return "%s/auth/swiggy/callback" % self.base_url
 
     @property
     def google_configured(self) -> bool:
@@ -129,6 +146,9 @@ class Settings:
             "ollama_host": self.ollama_host,
             "ollama_model": self.ollama_model,
             "whisper_model": self.whisper_model,
+            "notify_changes": self.notify_changes,
+            "dining_area": self.dining_area,
+            "dining_pin": self.dining_pin,
             "home": str(self.home),
         }
 
@@ -156,7 +176,19 @@ _ENV_MAP = {
     "OLLAMA_MODEL": ("ollama_model", str),
     "WHISPER_MODEL": ("whisper_model", str),
     "BSYNC_TOKEN_PASSPHRASE": ("token_passphrase", str),
+    "BSYNC_NOTIFY_CHANGES": ("notify_changes", lambda raw: _flag(raw)),
+    "SWIGGY_AREA": ("dining_area", str),
+    "SWIGGY_PIN": ("dining_pin", str),
 }
+
+
+def _flag(raw: str) -> bool:
+    lowered = raw.strip().lower()
+    if lowered in ("1", "true", "yes", "on"):
+        return True
+    if lowered in ("0", "false", "no", "off"):
+        return False
+    raise ValueError(raw)
 
 
 def load_settings(env_file: Path | None = None, environ: dict[str, str] | None = None) -> Settings:
@@ -170,7 +202,8 @@ def load_settings(env_file: Path | None = None, environ: dict[str, str] | None =
         try:
             setattr(settings, attr, cast(raw))
         except ValueError as exc:
-            raise ValueError("%s=%r is not a valid %s" % (key, raw, cast.__name__)) from exc
+            kind = "on/off value" if attr == "notify_changes" else cast.__name__
+            raise ValueError("%s=%r is not a valid %s" % (key, raw, kind)) from exc
     if settings.mode not in ("demo", "live"):
         raise ValueError("BSYNC_MODE must be 'demo' or 'live', not %r" % settings.mode)
     if settings.host not in ("127.0.0.1", "localhost", "::1"):

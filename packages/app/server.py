@@ -23,7 +23,7 @@ import json
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
@@ -32,6 +32,7 @@ from .google_auth import AuthFlowError, GoogleAuth
 from .runtime import NotReady, Runtime
 from .scheduler import Scheduler
 from .state import AppState
+from .swiggy import SwiggyAuth, SwiggyFlowError
 
 WEB_OUT = ROOT / "web" / "out"
 WRITE_METHODS = {"POST", "PUT", "PATCH", "DELETE"}
@@ -53,6 +54,9 @@ class SettingsIn(BaseModel):
     poll_minutes: int | None = Field(default=None, ge=1, le=240)
     alarm_minutes: int | None = Field(default=None, ge=0, le=1440)
     mode: str | None = Field(default=None, pattern="^(demo|live)$")
+    notify_changes: bool | None = None
+    dining_area: str | None = Field(default=None, max_length=120)
+    dining_pin: str | None = Field(default=None, pattern=r"^(\d{6})?$")
 
 
 def create_app(
@@ -66,7 +70,7 @@ def create_app(
     settings = settings or load_settings()
     if runtime is None:
         state = AppState(settings.db_path)
-        runtime = Runtime(settings, state, google=GoogleAuth(settings))
+        runtime = Runtime(settings, state, google=GoogleAuth(settings), swiggy=SwiggyAuth(settings, state))
     scheduler = Scheduler(runtime)
     allowed_hosts = {"127.0.0.1:%d" % settings.port, "localhost:%d" % settings.port, "testserver"}
     allowed_origins = {"http://127.0.0.1:%d" % settings.port, "http://localhost:%d" % settings.port}
@@ -119,6 +123,17 @@ def create_app(
     @app.get("/api/events")
     def events():
         return {"events": run(runtime.events)}
+
+    @app.get("/api/events/{event_id}")
+    def event_detail(event_id: str):
+        try:
+            return run(runtime.event_detail, event_id)
+        except LookupError:
+            raise HTTPException(404, "No such booking") from None
+
+    @app.get("/api/swiggy/orders")
+    def swiggy_orders():
+        return {"orders": run(runtime.swiggy_orders)}
 
     @app.get("/api/confirmations")
     def confirmations():
@@ -211,7 +226,12 @@ def create_app(
 
     @app.post("/api/connections/test/{name}")
     def test_connection(name: str):
-        return run(_test_connection, runtime, name)
+        try:
+            return run(_test_connection, runtime, name)
+        except HTTPException:
+            raise
+        except Exception as exc:  # network / provider failure: report it, don't 500
+            return {"ok": False, "detail": "Couldn't reach %s: %s" % (name.capitalize(), exc)}
 
     # -- Google OAuth ------------------------------------------------------
 
@@ -246,6 +266,35 @@ def create_app(
         runtime.build()
         return runtime.status_dict()
 
+    # -- Swiggy OAuth ------------------------------------------------------
+
+    @app.get("/auth/swiggy/start")
+    def swiggy_start():
+        if runtime.swiggy_auth is None:
+            raise HTTPException(404, "Swiggy sign-in is not available")
+        try:
+            return RedirectResponse(runtime.swiggy_auth.start_url(), status_code=303)
+        except SwiggyFlowError as exc:
+            return RedirectResponse("/connections/?error=%s" % _q(str(exc)), status_code=303)
+
+    @app.get("/auth/swiggy/callback")
+    def swiggy_callback(code: str | None = None, state: str | None = None, error: str | None = None):
+        if runtime.swiggy_auth is None:
+            raise HTTPException(404, "Swiggy sign-in is not available")
+        try:
+            runtime.swiggy_auth.complete(code, state, error)
+        except SwiggyFlowError as exc:
+            return RedirectResponse("/connections/?error=%s" % _q(str(exc)), status_code=303)
+        runtime.build()
+        return RedirectResponse("/connections/?connected=swiggy", status_code=303)
+
+    @app.post("/auth/swiggy/disconnect")
+    def swiggy_disconnect():
+        if runtime.swiggy_auth is not None:
+            runtime.swiggy_auth.disconnect()
+        runtime.build()
+        return runtime.status_dict()
+
     # -- live updates ------------------------------------------------------
 
     @app.get("/api/stream")
@@ -270,6 +319,15 @@ def create_app(
 
     dashboard = ROOT / "dashboard"
     if dashboard.exists():
+        from .research import live_index_js
+
+        @app.get("/research/data/index.js")
+        def research_data():
+            # The dashboard page, fed the app's own trajectories and calendar
+            # rather than the benchmark corpus baked into dashboard/data.
+            body = live_index_js(runtime)
+            return Response(body, media_type="application/javascript", headers={"Cache-Control": "no-store"})
+
         app.mount("/research", StaticFiles(directory=dashboard, html=True), name="research")
     if WEB_OUT.exists():
         app.mount("/", _NextExport(directory=WEB_OUT, html=True), name="web")
@@ -316,6 +374,14 @@ def _test_connection(runtime: Runtime, name: str) -> dict:
         me = runtime.bot.get_me()
         runtime.bot.send_text("Tripwire is connected. Approvals will arrive here.")
         return {"ok": True, "detail": "Sent a test message as @%s" % me.get("username", "bot")}
+    if name == "swiggy":
+        if runtime.swiggy is None:
+            raise NotReady(runtime.status.swiggy.get("detail", "Swiggy is not connected."))
+        food = runtime.swiggy.client.food.list_tools()
+        dineout = runtime.swiggy.client.dineout.list_tools()
+        orders = runtime.swiggy.client.active_orders()
+        return {"ok": True, "detail": "Signed in: %d Food and %d Dineout tools; %d active order%s"
+                % (len(food), len(dineout), len(orders), "" if len(orders) == 1 else "s")}
     if name == "ollama":
         runtime.build()
         return {"ok": bool(runtime.status.ollama.get("ok")), "detail": runtime.status.ollama.get("detail")}

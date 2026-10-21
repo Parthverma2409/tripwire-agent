@@ -1,6 +1,7 @@
 "use client";
 
-import { BellRing, Hash, MapPin } from "lucide-react";
+import { BellRing, ChevronRight, Hash, MapPin } from "lucide-react";
+import Link from "next/link";
 import { dayKey, dayLabel, displayRef, time } from "@/lib/format";
 import type { CalEvent } from "@/lib/types";
 import { TypeIcon, typeLabel } from "./booking-bits";
@@ -14,9 +15,17 @@ export function groupByDay(events: CalEvent[]): [string, CalEvent[]][] {
   return [...groups.entries()];
 }
 
+export function bookingHref(id: string) {
+  return `/bookings/view/?id=${encodeURIComponent(id)}`;
+}
+
 export function EventRow({ event }: { event: CalEvent }) {
   return (
-    <li className="flex items-start gap-3 py-3">
+    <li>
+      <Link
+        href={bookingHref(event.id)}
+        className="group -mx-4 flex items-start gap-3 px-4 py-3 transition-colors hover:bg-surface-2/60 focus-visible:bg-surface-2/60 focus-visible:outline-none"
+      >
       <div className="tabular w-16 shrink-0 pt-1.5 text-right text-[13px] font-medium text-ink-2">{time(event.start)}</div>
       <TypeIcon type={event.type} />
       <div className="min-w-0 flex-1">
@@ -47,6 +56,8 @@ export function EventRow({ event }: { event: CalEvent }) {
           ) : null}
         </div>
       </div>
+      <ChevronRight className="mt-2.5 size-4 shrink-0 text-ink-3 opacity-0 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" aria-hidden />
+      </Link>
     </li>
   );
 }

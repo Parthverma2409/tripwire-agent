@@ -1,7 +1,7 @@
 "use client";
 
 import clsx from "clsx";
-import { ArrowDown, CalendarX2, MoveRight, ShieldAlert, TimerReset } from "lucide-react";
+import { ArrowDown, CalendarX2, MoveRight, ShieldAlert, TimerReset, UtensilsCrossed } from "lucide-react";
 import { useEffect, useState } from "react";
 import { post } from "@/lib/api";
 import { countdown, dateTime, senderName, stageLabel } from "@/lib/format";
@@ -51,6 +51,8 @@ export function ApprovalCard({ item, onDone }: { item: Confirmation; onDone: () 
   }, [item.seconds_left]);
 
   const isDelete = item.action === "DELETE";
+  // A Swiggy table: committing you to a reservation, so it is asked like a delete.
+  const isBook = item.action === "BOOK";
   const trust = item.meta.trust;
   const failed = trust?.level === "failed";
   const queued = item.status === "queued";
@@ -63,12 +65,12 @@ export function ApprovalCard({ item, onDone }: { item: Confirmation; onDone: () 
       disabled={busy !== null}
       onClick={() => decide(true)}
     >
-      {isDelete ? "Delete event" : "Move event"}
+      {isBook ? "Book table" : isDelete ? "Delete event" : "Move event"}
     </Button>
   );
   const keep = (
     <Button variant={failed ? "primary" : "secondary"} busy={busy === "no"} disabled={busy !== null} onClick={() => decide(false)}>
-      {isDelete ? "Keep it" : "Keep current time"}
+      {isBook ? "Don’t book" : isDelete ? "Keep it" : "Keep current time"}
     </Button>
   );
 
@@ -113,10 +115,10 @@ export function ApprovalCard({ item, onDone }: { item: Confirmation; onDone: () 
               )}
               aria-hidden
             >
-              {isDelete ? <CalendarX2 className="size-4" /> : <MoveRight className="size-4" />}
+              {isBook ? <UtensilsCrossed className="size-4" /> : isDelete ? <CalendarX2 className="size-4" /> : <MoveRight className="size-4" />}
             </span>
             <h3 id={`q-${item.request_id}`} className="text-[15px] font-semibold text-ink">
-              {isDelete ? "Delete this event?" : "Move this event?"}
+              {isBook ? "Book this table?" : isDelete ? "Delete this event?" : "Move this event?"}
             </h3>
           </div>
           {queued ? (
@@ -131,8 +133,19 @@ export function ApprovalCard({ item, onDone }: { item: Confirmation; onDone: () 
         </div>
 
         <div className="mt-4 space-y-2 rounded-xl bg-surface-2 p-3">
-          {item.before ? <EventLine event={item.before} strike={isDelete} muted={!isDelete} /> : <p className="text-sm text-ink-2">{item.prompt}</p>}
-          {!isDelete && item.after ? (
+          {isBook && item.after ? (
+            <>
+              <EventLine event={item.after} />
+              <p className="pl-12 text-[13px] text-ink-2">
+                {item.meta.guests ? `${item.meta.guests} ${item.meta.guests === 1 ? "guest" : "guests"} · ` : ""}free reservation on Swiggy Dineout
+              </p>
+            </>
+          ) : item.before ? (
+            <EventLine event={item.before} strike={isDelete} muted={!isDelete} />
+          ) : (
+            <p className="text-sm text-ink-2">{item.prompt}</p>
+          )}
+          {!isDelete && !isBook && item.after ? (
             <>
               <div className="flex items-center gap-2 pl-3 text-[12px] font-medium text-accent-ink">
                 <ArrowDown className="size-3.5" aria-hidden /> New time
@@ -149,6 +162,8 @@ export function ApprovalCard({ item, onDone }: { item: Confirmation; onDone: () 
                 From an email by <span className="font-medium text-ink-2">{who}</span>
                 {item.meta.stage ? ` · read from ${inSentence(stageLabel(item.meta.stage, trust?.vendor_name), item.meta.stage)}` : ""}
               </>
+            ) : isBook ? (
+              "From your request · Tripwire books only after you say yes"
             ) : (
               "From your request"
             )}
@@ -187,7 +202,9 @@ export function ApprovalCard({ item, onDone }: { item: Confirmation; onDone: () 
             </>
           )}
         </div>
-        <p className="mt-3 text-[12px] text-ink-3">If you don’t answer in time, nothing changes.</p>
+        <p className="mt-3 text-[12px] text-ink-3">
+          {isBook ? "If you don’t answer in time, nothing is booked." : "If you don’t answer in time, nothing changes."}
+        </p>
       </div>
     </article>
   );

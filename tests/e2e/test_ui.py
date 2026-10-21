@@ -100,3 +100,12 @@ def test_uploading_a_promotion_changes_nothing(page, app_url) -> None:
     page.get_by_label("Choose .eml files to test").set_input_files(str(FIXTURES / "promo_fare_sale.eml"))
     page.get_by_text("it’s a promotion").first.wait_for()
     assert runtime.events() == before
+
+
+def test_a_booking_opens_its_detail_page(page, app_url) -> None:
+    url, _ = app_url
+    page.goto(url + "/bookings/")
+    page.get_by_role("link", name="Uber Reserve pickup to Kempegowda Airport").first.click()
+    page.get_by_role("heading", level=1, name="Uber Reserve pickup to Kempegowda Airport").wait_for()
+    assert page.get_by_role("link", name="Book this ride in Uber").is_visible()
+    assert page.get_by_role("heading", name="History").is_visible()

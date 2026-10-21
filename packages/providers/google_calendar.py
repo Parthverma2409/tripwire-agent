@@ -26,7 +26,7 @@ it recorded payloads shaped like real Calendar API responses.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 
 from packages.core.models import Alarm, BookingType, CalendarEvent
@@ -54,6 +54,10 @@ class GoogleCalendarProvider:
     #: IANA name sent to Google with every write. See the module docstring for
     #: why the default is UTC rather than the machine's local zone.
     time_zone: str = "UTC"
+    #: event_id -> what Google knows that the domain model has no room for
+    #: (link, description, who created it). Read by the app's booking detail
+    #: view; never by the agent.
+    _details: dict = field(default_factory=dict, repr=False)
 
     # -- CalendarProvider -------------------------------------------------
 
@@ -85,8 +89,10 @@ class GoogleCalendarProvider:
     def update_event(self, event: CalendarEvent) -> CalendarEvent:
         if not event.event_id:
             raise ValueError("update_event requires an event_id")
+        # PATCH, not PUT: a PUT replaces the whole resource, so moving an event
+        # Gmail created would wipe its description, attachments and colour.
         updated = self.client.request(
-            "PUT",
+            "PATCH",
             "%s/calendars/%s/events/%s" % (API_ROOT, self.calendar_id, event.event_id),
             payload=self._to_resource(event),
         )
@@ -141,6 +147,7 @@ class GoogleCalendarProvider:
             raise GoogleApiError(
                 "calendar event %r has no start time" % resource.get("id", "<unknown>")
             )
+        self._details[resource.get("id", "")] = _details_from(resource)
         return CalendarEvent(
             event_id=resource.get("id", ""),
             title=resource.get("summary") or "(no title)",
@@ -151,6 +158,10 @@ class GoogleCalendarProvider:
             location=resource.get("location"),
             alarm=_alarm_from(resource, start),
         )
+
+    def details(self, event_id: str) -> dict:
+        """Extra fields for one event, as last read. Empty if never seen."""
+        return dict(self._details.get(event_id, {}))
 
     def _to_google_time(self, when: datetime) -> dict:
         return {"dateTime": _to_naive(when).strftime("%Y-%m-%dT%H:%M:%S"), "timeZone": self.time_zone}
@@ -176,6 +187,26 @@ def _to_naive(when: datetime) -> datetime:
     if when.tzinfo is None:
         return when
     return when.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+def _details_from(resource: dict) -> dict:
+    private = (resource.get("extendedProperties") or {}).get("private") or {}
+    if resource.get("eventType") == "fromGmail":
+        origin = "gmail"
+    elif private.get(PRIVATE_TYPE) or private.get(PRIVATE_REF):
+        origin = "tripwire"
+    else:
+        origin = "calendar"
+    source = resource.get("source") or {}
+    return {
+        "html_link": resource.get("htmlLink"),
+        "description": (resource.get("description") or "")[:4000],
+        "origin": origin,
+        "source_url": source.get("url"),
+        "source_title": source.get("title"),
+        "created": resource.get("created"),
+        "updated": resource.get("updated"),
+    }
 
 
 def _booking_type(raw: str | None) -> BookingType | None:

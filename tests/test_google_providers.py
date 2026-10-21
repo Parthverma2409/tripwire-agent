@@ -256,7 +256,7 @@ def test_create_event_supplies_an_end_time_google_would_reject_without() -> None
     assert transport.payload(0)["end"] == {"dateTime": "2026-08-20T10:15:00", "timeZone": "UTC"}
 
 
-def test_update_event_puts_to_the_event_id() -> None:
+def test_update_event_patches_the_event_id() -> None:
     """A reschedule must address the existing event, never create a second one."""
     moved = _event_resource(start={"dateTime": "2026-08-20T14:00:00Z"}, end={"dateTime": "2026-08-20T15:00:00Z"})
     client = _client(ok(moved))
@@ -267,7 +267,8 @@ def test_update_event_puts_to_the_event_id() -> None:
     )
 
     method, url, _, _ = transport.calls[0]
-    assert method == "PUT"
+    # PATCH keeps fields Tripwire does not manage (a Gmail event's description).
+    assert method == "PATCH"
     assert url.endswith("/calendars/primary/events/g1")
     assert result.start_time == datetime(2026, 8, 20, 14, 0)
 

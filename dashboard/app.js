@@ -10,6 +10,10 @@
   "use strict";
 
   const DATA = window.TRAJECTORY_DATA;
+  // Served by the Tripwire app, the data is the app's own activity and the
+  // real calendar (packages/app/research.py); from disk, the benchmark corpus.
+  const LIVE = DATA.mode === "live";
+  const GROUP = LIVE ? "source" : "scenario";
 
   const KNOWN_STATUS_CLASSES = new Set([
     "success",
@@ -220,7 +224,9 @@
         icon: "list",
         cls: "accent",
         value: s.valid,
-        sub: "<b>" + s.families.length + "</b> families &middot; <b>" + ucs.length + "</b> use cases",
+        sub: LIVE
+          ? "<b>" + s.families.length + "</b> kind" + (s.families.length === 1 ? "" : "s") + " of request"
+          : "<b>" + s.families.length + "</b> families &middot; <b>" + ucs.length + "</b> use cases",
         meter: meter(
           s.statuses.map((st) => ({
             cls: "seg-" + statusClass(st),
@@ -299,9 +305,11 @@
       })
     );
 
-    $("overview-sub").textContent =
-      "model " + (DATA.trajectories[0] || {}).model + "  |  " + s.families.length +
-      " scenario families  |  source: " + Object.keys(s.by_source || {}).join(", ");
+    $("overview-sub").textContent = LIVE
+      ? s.valid + (s.valid === 1 ? " thing" : " things") + " Tripwire did  |  " + s.families.length +
+        (s.families.length === 1 ? " kind" : " kinds") + " of request  |  live from this app"
+      : "model " + (DATA.trajectories[0] || {}).model + "  |  " + s.families.length +
+        " scenario families  |  source: " + Object.keys(s.by_source || {}).join(", ");
   }
 
   /* ---------- outcome mix ---------- */
@@ -839,9 +847,9 @@
   /* ---------- views + router ---------- */
 
   const VIEWS = {
-    overview: { title: "Overview", sub: "health of the captured trajectory corpus" },
-    trajectories: { title: "Trajectories", sub: "browse, filter and drill into every captured run" },
-    calendar: { title: "Calendar", sub: "every booking and calendar event the scenarios touch" },
+    overview: { title: "Overview", sub: LIVE ? "how Tripwire has behaved on your real inbox and calendar" : "health of the captured trajectory corpus" },
+    trajectories: { title: "Trajectories", sub: LIVE ? "every request Tripwire handled, step by step" : "browse, filter and drill into every captured run" },
+    calendar: { title: "Calendar", sub: LIVE ? "your real calendar, and what Tripwire did to each event" : "every booking and calendar event the scenarios touch" },
   };
   let currentView = "overview";
 
@@ -887,6 +895,14 @@
     $("side-built").textContent = String(DATA.generated_at).slice(0, 10);
     $("nav-traj-count").textContent = s.valid;
     $("nav-cal-count").textContent = ((DATA.calendar || {}).events || []).length;
+    if (LIVE) {
+      document.title = "Tripwire Research";
+      document.querySelector(".brand-name").textContent = "Tripwire";
+      document.querySelector(".brand-sub").textContent = "Research view";
+      document.querySelector(".chart-family .card-title").textContent = "Requests by what started them";
+      $("cal-today").textContent = "Today";
+      $("cal-search").placeholder = "Title, ref...";
+    }
 
     const chip = $("gate-chip");
     chip.textContent = "";
@@ -980,7 +996,7 @@
     });
     const days = Array.from(byDay.keys()).sort().slice(0, 5);
     $("upcoming-sub").textContent = days.length
-      ? "from the scenario clock, " + fmtDate(now)
+      ? (LIVE ? "from today, " : "from the scenario clock, ") + fmtDate(now)
       : "no dated events";
 
     days.forEach((day) => {
@@ -1005,7 +1021,7 @@
           const it = el("div", "up-item");
           it.appendChild(el("span", "swatch type-" + typeClass(e.type)));
           it.appendChild(el("span", "t", e.title));
-          it.appendChild(el("span", "n", n + " scenario" + (n > 1 ? "s" : "")));
+          if (!LIVE || n > 1) it.appendChild(el("span", "n", n + " " + GROUP + (n > 1 ? "s" : "")));
           items.appendChild(it);
         });
       if (grouped.size > 4) {
@@ -1293,13 +1309,13 @@
     host.textContent = "";
     if (!cal.day) {
       host.appendChild(el("h3", null, "Day view"));
-      host.appendChild(el("p", "day-sub", "Click a day to see every event on it, grouped by scenario."));
+      host.appendChild(el("p", "day-sub", "Click a day to see every event on it, grouped by " + GROUP + "."));
       return;
     }
     const list = byDay.get(cal.day) || [];
     const h = el("h3", null, fmtDate(cal.day));
     host.appendChild(h);
-    host.appendChild(el("p", "day-sub", list.length + " event" + (list.length === 1 ? "" : "s") + " across " + new Set(list.map((e) => e.scenario_id)).size + " scenarios"));
+    host.appendChild(el("p", "day-sub", list.length + " event" + (list.length === 1 ? "" : "s") + " across " + new Set(list.map((e) => e.scenario_id)).size + " " + GROUP + "s"));
     if (!list.length) {
       host.appendChild(el("p", "day-empty", "Nothing on this day matches the filters."));
       return;

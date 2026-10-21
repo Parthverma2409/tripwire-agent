@@ -5,7 +5,8 @@ import { Activity, CalendarDays, Inbox, Monitor, Moon, PlugZap, Settings, Sun, S
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
-import { useLive, useResource } from "@/lib/live";
+import { useChangeNotifications, useLive, useResource } from "@/lib/live";
+import { useToast } from "./toast";
 import type { Confirmation, Status } from "@/lib/types";
 import { StatusDot } from "./ui";
 
@@ -91,6 +92,7 @@ function ThemeToggle() {
 export function Shell({ children }: { children: React.ReactNode }) {
   const path = usePathname() || "/";
   const { connected } = useLive();
+  useChangeNotifications(useToast());
   const { data: status } = useResource<Status>("/api/status", ["status", "scan"]);
   const { data: pending } = useResource<{ confirmations: Confirmation[] }>("/api/confirmations", ["confirmations"]);
   const waiting = pending?.confirmations.length ?? 0;

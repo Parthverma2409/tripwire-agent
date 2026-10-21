@@ -9,11 +9,14 @@ true state of travel bookings across creation, rescheduling and cancellation.
 behaviour, and the two research studies built on it.
 **Tripwire** is the app that puts both in front of a person: a local web UI that reads
 booking mail from Gmail or IMAP, keeps Google Calendar in step, and asks before it
-deletes or moves anything (in the browser, or on Telegram).
+deletes or moves anything (in the browser, or on Telegram). It tells you whenever the
+calendar changes, tracks Swiggy orders and books Dineout tables through Swiggy's official
+MCP servers (after your OK), and opens any ride in Uber with the drop-off filled in.
 
 ### Run the app
 
-**Windows:** double-click `run_app.bat`. **macOS / Linux:** `./run_app.sh`.
+**Windows:** double-click `run_app.bat` (or a desktop shortcut to it, with `assets/tripwire.ico`).
+**macOS / Linux:** `./run_app.sh`.
 It opens `http://127.0.0.1:8765` in **demo mode** (sample emails, practice calendar).
 To connect your real accounts, follow **[docs/CONNECT.md](docs/CONNECT.md)**.
 
@@ -53,9 +56,10 @@ The demo is the fastest way to understand what this does. Start there.
 | 4 | Capture SDK (FR7), ingest pipeline, evaluator registry (FR8) | done |
 | 5 | Google adapters, OAuth + token store, voice shell, activation window | done (unverified vs live Google) |
 | 6 | Dashboard (FR9), model comparison (FR10), RQ1/RQ2 | done (awaiting human labels) |
-| 7 | Tripwire app: FastAPI service, Next.js UI, staged email extraction (schema.org, .ics, vendor profiles), sender trust, IMAP, Telegram approvals, Ollama fallback, local Whisper | done (unverified vs live services) |
+| 7 | Tripwire app: FastAPI service, Next.js UI, staged email extraction (schema.org, .ics, vendor profiles), sender trust, IMAP, Telegram approvals, Ollama fallback, local Whisper | done; Google verified live |
+| 8 | Real use: change notifications, booking detail view, real-calendar fixes (past trips, Gmail-made events), Swiggy over MCP (orders, Dineout tables), Uber deep links, live research view | done; Swiggy tools unverified vs live |
 
-**797 tests, 66 scenarios, 0 FR5 violations.** What is *not* done is measurement, not
+**956 tests, 66 scenarios, 0 FR5 violations.** What is *not* done is measurement, not
 code: see [Honest limits](#honest-limits).
 
 ---
@@ -162,6 +166,8 @@ packages/analysis/      pure-Python statistics, RQ1 and RQ2
 packages/demo/          narrated walkthrough
 packages/app/           Tripwire: FastAPI service, runtime, scheduler, OAuth flow, SQLite state
 packages/notify/        Telegram approvals (signed buttons, long polling)
+packages/providers/swiggy.py  Swiggy MCP client: OAuth 2.1 + PKCE, streamable HTTP
+assets/                 app icon (tripwire.ico) for the desktop shortcut
 web/                    Next.js UI, exported static and served by packages/app
 dashboard/              FR9 static offline dashboard (no build step), also at /research/
 data/vendors/           sender profiles for the email extractor (MakeMyTrip, IndiGo, IRCTC, Uber...)
@@ -191,12 +197,14 @@ that has to happen before the labelling session rather than after.
 
 Worth knowing before quoting any number from this repository.
 
-- **The Google adapters, Gmail attachment fetch, IMAP, Telegram, Ollama and Whisper have
-  never run against the real services.** No credentials or models existed on the build
-  machine; `docs/CONNECT.md` is how they get wired and the Connections page tests each one.
-  The Google adapters' tests prove self-consistency and correct handling of Google's
-  documented error dialect; they cannot prove the payload shapes are right. `DATASETS.md`
-  lists exactly what stays unverified until you run it.
+- **What has run against real services, and what hasn't.** Google OAuth, Calendar
+  read/write and the Gmail search have run against a real account (that run is how the
+  past-trip and Gmail-made-event fixes were found). The Telegram bot token was checked
+  live; the app's long-poll loop was not, because `api.telegram.org` was unreachable from
+  the build network. Swiggy's sign-in endpoints (registration, authorize, token) were
+  probed live; its tools have not been called with a real account, so their payloads
+  follow the published docs, not observed responses. IMAP, Gmail `.ics` attachment fetch,
+  and Ollama have not run live. `DATASETS.md` lists exactly what stays unverified.
 - **Vendor profiles (`data/vendors/vendors.yaml`) were written from public knowledge, not
   from real mail.** The email fixtures under `data/emails/fixtures/vendors/` are synthetic.
   Run `check-email` on your own booking mail before trusting a profile.

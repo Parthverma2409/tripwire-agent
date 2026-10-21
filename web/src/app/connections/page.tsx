@@ -1,7 +1,8 @@
 "use client";
 
 import clsx from "clsx";
-import { BrainCircuit, CalendarDays, ChevronDown, CircleCheck, Mail, Mic, Send, TriangleAlert } from "lucide-react";
+import { BrainCircuit, CalendarDays, CarFront, ChevronDown, CircleCheck, Mail, Mic, Send, TriangleAlert, UtensilsCrossed } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useToast } from "@/components/toast";
 import { Badge, Button, Card, ErrorNote, PageHeader, Skeleton } from "@/components/ui";
@@ -17,7 +18,7 @@ function Code({ children }: { children: React.ReactNode }) {
   return <code translate="no" className="rounded bg-surface-2 px-1.5 py-0.5 font-mono text-[12px] text-ink break-all">{children}</code>;
 }
 
-function ConnectionCard({ icon, title, summary, state, actions, steps, optional = false }: {
+function ConnectionCard({ icon, title, summary, state, actions, steps, optional = false, okLabel = "Connected" }: {
   icon: React.ReactNode;
   title: string;
   summary: string;
@@ -25,6 +26,8 @@ function ConnectionCard({ icon, title, summary, state, actions, steps, optional 
   actions?: React.ReactNode;
   steps: Step[];
   optional?: boolean;
+  /** What a working state is called; "Connected" overstates one with no sign-in. */
+  okLabel?: string;
 }) {
   const [open, setOpen] = useState(false);
   const ok = Boolean(state?.ok);
@@ -46,7 +49,7 @@ function ConnectionCard({ icon, title, summary, state, actions, steps, optional 
             {state ? (
               ok ? (
                 <Badge tone="ok" icon={<CircleCheck className="size-3.5" aria-hidden />}>
-                  Connected
+                  {okLabel}
                 </Badge>
               ) : optional ? (
                 <Badge tone="neutral">Optional</Badge>
@@ -98,6 +101,7 @@ export default function ConnectionsPage() {
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     if (params.get("connected") === "google") setNotice({ tone: "ok", text: "Google connected. Tripwire is now using your real calendar and inbox." });
+    if (params.get("connected") === "swiggy") setNotice({ tone: "ok", text: "Swiggy connected. Order updates will reach you, and you can book tables by asking on Today." });
     if (params.get("error")) setNotice({ tone: "error", text: params.get("error") as string });
     if (params.toString()) window.history.replaceState(null, "", window.location.pathname);
   }, []);
@@ -119,6 +123,16 @@ export default function ConnectionsPage() {
     try {
       await post("/api/settings", { mode });
       toast("ok", mode === "demo" ? "Switched to demo mode." : "Switched to live mode.");
+      reload();
+    } catch (e) {
+      toast("error", e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  async function disconnectSwiggy() {
+    try {
+      await post("/auth/swiggy/disconnect");
+      toast("ok", "Swiggy disconnected. Its sign-in was deleted from this computer.");
       reload();
     } catch (e) {
       toast("error", e instanceof Error ? e.message : String(e));
@@ -260,8 +274,8 @@ export default function ConnectionsPage() {
 
         <ConnectionCard
           icon={<Send className="size-5" />}
-          title="Telegram approvals"
-          summary="Get “Needs your OK” questions on your phone with Approve / Decline buttons."
+          title="Telegram"
+          summary="“Needs your OK” questions with Approve / Decline buttons, plus a note on your phone whenever your calendar changes."
           state={c.telegram}
           optional
           actions={
@@ -276,6 +290,54 @@ export default function ConnectionsPage() {
             { text: <>Send any message to your new bot, then open <Code>https://api.telegram.org/bot&lt;TOKEN&gt;/getUpdates</Code> and copy <Code>chat.id</Code>.</> },
             { text: <>Add <Code>TELEGRAM_BOT_TOKEN</Code> and <Code>TELEGRAM_CHAT_ID</Code> to <Code>.env</Code>, restart, and press <b>Send test message</b>.</> },
             { text: <>Only that chat is listened to, and every button is signed, so nobody else can approve anything.</> },
+          ]}
+        />
+
+        <ConnectionCard
+          icon={<UtensilsCrossed className="size-5" />}
+          title="Swiggy"
+          summary="Food order updates as notifications, and Dineout tables booked by asking (always after your OK)."
+          state={live ? c.swiggy : { ok: status.swiggy.connected, detail: status.swiggy.connected ? "Signed in. Switch to live mode to use it." : "Optional." }}
+          optional
+          actions={
+            status.swiggy.connected ? (
+              <>
+                {live ? (
+                  <Button size="sm" busy={testing === "swiggy"} onClick={() => test("swiggy")}>
+                    Test
+                  </Button>
+                ) : null}
+                <Button size="sm" variant="ghost" onClick={disconnectSwiggy}>
+                  Disconnect
+                </Button>
+              </>
+            ) : (
+              <a
+                href="/auth/swiggy/start"
+                className="inline-flex h-8 items-center gap-1.5 rounded-lg bg-[#fc8019] px-3 text-[13px] font-semibold text-[#2a1300] shadow-card hover:opacity-90"
+              >
+                Connect Swiggy
+              </a>
+            )
+          }
+          steps={[
+            { text: <>Click <b>Connect Swiggy</b> and sign in with your phone number and the OTP Swiggy sends. The OTP goes to Swiggy, never to Tripwire.</> },
+            { text: <>This uses Swiggy’s official connector for AI apps (the same one Claude and ChatGPT use). The sign-in lasts 30 days and renews while you use Tripwire.</> },
+            { text: <>For tables, set your <b>dining area and PIN code</b> in <Link href="/settings/" className="text-accent-ink underline underline-offset-2">Settings</Link>.</> },
+            { text: <>Then on Today, say “book a table at Toit for 4 tomorrow at 8pm on Swiggy”. Tripwire finds a free slot and asks before booking. Paid deals stay in the Swiggy app.</> },
+          ]}
+        />
+
+        <ConnectionCard
+          icon={<CarFront className="size-5" />}
+          title="Uber"
+          summary="No sign-in needed. Uber Reserve emails become rides on your calendar, and every ride has a one-tap Book in Uber button."
+          state={{ ok: true, detail: "Works through your inbox. Ride details open in Uber with the drop-off filled in." }}
+          okLabel="No setup needed"
+          steps={[
+            { text: <>Uber doesn’t give personal apps access to rides or trip history, so Tripwire works from what Uber emails you: Reserve confirmations and their calendar invites are read automatically.</> },
+            { text: <>Open any ride on the Bookings page and tap <b>Book this ride in Uber</b>. Uber opens with the drop-off already set; you confirm the ride there.</> },
+            { text: <>Typed rides work too: “book a cab to the airport tomorrow at 6am” puts it on your calendar with the same button.</> },
           ]}
         />
 

@@ -7,7 +7,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { get } from "./api";
 
-type Listener = (topic: string) => void;
+type Listener = (topic: string, data: unknown) => void;
 
 interface Live {
   connected: boolean;
@@ -16,7 +16,7 @@ interface Live {
 
 const LiveContext = createContext<Live>({ connected: false, subscribe: () => () => {} });
 
-const TOPICS = ["calendar", "confirmations", "inbox", "activity", "scan", "status", "rebuilt"];
+const TOPICS = ["calendar", "confirmations", "inbox", "activity", "scan", "status", "rebuilt", "notify", "swiggy"];
 
 export function LiveProvider({ children }: { children: React.ReactNode }) {
   const [connected, setConnected] = useState(false);
@@ -31,7 +31,15 @@ export function LiveProvider({ children }: { children: React.ReactNode }) {
       source = new EventSource("/api/stream");
       source.addEventListener("hello", () => setConnected(true));
       for (const topic of TOPICS) {
-        source.addEventListener(topic, () => listeners.current.forEach((fn) => fn(topic)));
+        source.addEventListener(topic, (event) => {
+          let data: unknown = null;
+          try {
+            data = JSON.parse((event as MessageEvent).data);
+          } catch {
+            data = null;
+          }
+          listeners.current.forEach((fn) => fn(topic, data));
+        });
       }
       source.onerror = () => {
         setConnected(false);
@@ -130,4 +138,32 @@ export function useUrlState<T extends string>(key: string, fallback: T, allowed:
     [key, fallback],
   );
   return [value, update];
+}
+
+/** "notify" events -- a calendar change, a Swiggy order update -- as a toast
+ *  while you're looking, and a desktop notification while the tab is in the
+ *  background (if you allowed them in Settings). */
+export function useChangeNotifications(toast: (tone: "ok" | "info", text: string) => void) {
+  const { subscribe } = useLive();
+  useEffect(
+    () =>
+      subscribe((topic, data) => {
+        if (topic !== "notify" || !data || typeof data !== "object") return;
+        const message = String((data as { message?: unknown }).message ?? "");
+        if (!message) return;
+        if (document.visibilityState === "visible") {
+          // Your own action in the app already shows its result where you typed it.
+          if ((data as { channel?: unknown }).channel !== "app") toast("info", message);
+          return;
+        }
+        if ("Notification" in window && Notification.permission === "granted") {
+          try {
+            new Notification("Tripwire", { body: message, icon: "/favicon.ico", tag: message.slice(0, 64) });
+          } catch {
+            toast("info", message);
+          }
+        }
+      }),
+    [subscribe, toast],
+  );
 }

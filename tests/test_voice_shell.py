@@ -274,11 +274,13 @@ def test_constructing_the_real_transcriber_is_free_and_does_not_load_a_model() -
     assert transcriber.name == "faster-whisper:base.en"
 
 
-def test_the_real_transcriber_raises_an_actionable_error_when_the_library_is_missing() -> None:
+def test_the_real_transcriber_raises_an_actionable_error_when_the_library_is_missing(monkeypatch) -> None:
     """Not ImportError, and not a stack trace ending in someone else's module.
 
     The message has to name the library, the thing that failed, and the way out.
     """
+    # Missing even where it is installed: otherwise this test would load a model.
+    monkeypatch.setitem(sys.modules, "faster_whisper", None)
     with pytest.raises(VoiceUnavailableError) as raised:
         WhisperTranscriber("base.en").transcribe("clip.wav")
 
@@ -328,12 +330,13 @@ def test_the_real_speaker_checks_its_voice_model_too(tmp_path: Path, monkeypatch
         PiperSpeaker(str(tmp_path / "missing.onnx")).speak("hello")
 
 
-def test_a_missing_voice_backend_does_not_stop_the_typed_command_path() -> None:
+def test_a_missing_voice_backend_does_not_stop_the_typed_command_path(monkeypatch) -> None:
     """The point of degrading gracefully: the assistant still works, silently.
 
     An unavailable microphone or speaker must cost the user voice, not the
     product.
     """
+    monkeypatch.setitem(sys.modules, "faster_whisper", None)
     calendar = _calendar_with_flight()
     agent = SyncAgent(calendar)
     shell = VoiceShell(WhisperTranscriber(), PiperSpeaker("voice.onnx"), agent)

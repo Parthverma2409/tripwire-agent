@@ -10,9 +10,10 @@ Phase 4 capture SDK will forward rather than reinvent.
 
 from __future__ import annotations
 
+import re
 import uuid
-from dataclasses import dataclass, field, fields
-from datetime import datetime
+from dataclasses import dataclass, field, fields, replace
+from datetime import datetime, timedelta
 from typing import Protocol, runtime_checkable
 
 from packages.core.confirmation import ConfirmationRequest, ConfirmationStatus, ConfirmationStore
@@ -32,7 +33,7 @@ from packages.nlp.email_extract import EmailExtraction, extract_bookings
 from packages.nlp.extractor import Extractor
 from packages.nlp.html_text import html_to_text
 from packages.nlp.resolve import resolve_datetime
-from packages.nlp.schema import Frame, Intent, RESPONSE_INTENTS
+from packages.nlp.schema import RESPONSE_INTENTS, Frame, Intent, Slot
 from packages.nlp.trust import SenderTrust, assess
 from packages.providers.calendar import CalendarProvider, RateLimitError
 from packages.providers.mail import RawEmail
@@ -143,6 +144,7 @@ class SyncAgent:
         if frame.intent is Intent.QUERY_STATUS:
             return self._answer_query(frame, now, tape)
 
+        frame = _with_ride_destination(frame, text, tape)
         return self._reconcile_from_frame(frame, Source.VOICE, now, tape)
 
     # -- UC2: an inbound email --------------------------------------------
@@ -245,6 +247,19 @@ class SyncAgent:
 
     # -- UC3: resolving a confirmation ------------------------------------
 
+    # -- a booking from a connected account (Swiggy) -----------------------
+
+    def handle_booking(self, booking: BookingEvent, now: datetime, label: str, model: str = "connected-account") -> AgentResult:
+        """A structured booking from a connected service rather than prose.
+
+        Same path as a command or an email: reconciliation decides, and a
+        destructive outcome (the restaurant cancelled) stops at the gate.
+        """
+        tape = _Tape(source="system", text=label, now=now, model=model)
+        self._release_queued(now, tape)
+        tape.think("structured %s booking %s (%s)" % (booking.booking_type.value, booking.booking_ref, booking.status.value))
+        return self._decide_and_act(booking, now, tape)
+
     def resolve_confirmation(self, request_id: str, confirmed: bool | None, now: datetime) -> AgentResult:
         tape = _Tape(source="voice", text="confirmation:%s" % request_id, now=now, model=self.extractor.name)
         try:
@@ -274,7 +289,7 @@ class SyncAgent:
                 matches = [e for e in events if e.start_time.date() == wanted.value.date()]
                 if not matches:
                     return tape.done(
-                        AgentResult("success", "Nothing is booked on %s." % wanted.value.strftime("%d %b"))
+                        AgentResult("success", "Nothing is booked on %s." % _day(wanted.value, now))
                     )
 
         if not matches and slots.get("destination"):
@@ -285,12 +300,12 @@ class SyncAgent:
             return tape.done(
                 AgentResult(
                     "success",
-                    "I could not find a booking matching that. You currently have: %s." % _summarise(events),
+                    "I could not find a booking matching that. You currently have: %s." % _summarise(_upcoming_first(events, now), now),
                 )
             )
 
         tape.think("query matched %d event(s)" % len(matches))
-        return tape.done(AgentResult("success", _summarise(matches) + "."))
+        return tape.done(AgentResult("success", _summarise(_upcoming_first(matches, now), now) + "."))
 
     def _answer_pending(self, frame: Frame, now: datetime, tape: "_Tape") -> AgentResult:
         pending = self.confirmations.pending(now)
@@ -396,6 +411,21 @@ class SyncAgent:
         elif "relative_ref" in slots or "booking_ref" in slots:
             # "Cancel my Chennai flight" carries no date -- the calendar supplies it.
             candidates = self._candidates_for(slots, events)
+            # A real calendar holds years of history: last year's Chennai flight
+            # is not what "cancel my Chennai flight" means today.
+            upcoming = [c for c in candidates if c.start_time >= now - _RECENT]
+            if candidates and not upcoming:
+                tape.think("every event matching %r is in the past" % title)
+                return tape.done(
+                    AgentResult(
+                        "refused",
+                        "That has already happened (%s), so there is nothing to change."
+                        % ", ".join("%s on %s" % (c.title, _on(c.start_time, now)) for c in candidates[-3:]),
+                    )
+                )
+            if len(upcoming) < len(candidates):
+                tape.think("ignored %d past event(s) matching %r" % (len(candidates) - len(upcoming), title))
+            candidates = upcoming
             if len(candidates) == 1:
                 when = candidates[0].start_time
                 tape.think("resolved %r to event %s at %s" % (title, candidates[0].event_id, when))
@@ -405,7 +435,7 @@ class SyncAgent:
                     AgentResult(
                         "refused",
                         "More than one booking matches that: %s. Which one?"
-                        % ", ".join("%s on %s" % (c.title, c.start_time.strftime("%d %b at %H:%M")) for c in candidates),
+                        % ", ".join("%s on %s" % (c.title, _on(c.start_time, now)) for c in candidates),
                         needs_clarification=True,
                     )
                 )
@@ -477,7 +507,7 @@ class SyncAgent:
                 return tape.done(
                     AgentResult(
                         "success",
-                        "Added %s on %s to your calendar." % (booking.title, booking.date_time.strftime("%d %b at %H:%M")),
+                        "Added %s on %s to your calendar." % (booking.title, _on(booking.date_time, now)),
                         decision=decision,
                     )
                 )
@@ -536,8 +566,50 @@ class SyncAgent:
 # -- helpers --------------------------------------------------------------
 
 
-def _summarise(events: list[CalendarEvent]) -> str:
-    return "; ".join("%s on %s" % (e.title, e.start_time.strftime("%d %b at %H:%M")) for e in events)
+#: How long after it starts an event still counts as current: "cancel my cab"
+#: said just after pickup time still means that cab.
+_RECENT = timedelta(hours=6)
+
+
+def _on(when: datetime, now: datetime) -> str:
+    """'27 Oct at 14:20', with the year when it is not this year's."""
+    return when.strftime("%d %b at %H:%M" if when.year == now.year else "%d %b %Y at %H:%M")
+
+
+def _day(when: datetime, now: datetime) -> str:
+    return when.strftime("%d %b" if when.year == now.year else "%d %b %Y")
+
+
+def _upcoming_first(events: list[CalendarEvent], now: datetime, limit: int = 8) -> list[CalendarEvent]:
+    """What is still ahead; only when nothing is, the most recent past."""
+    upcoming = [e for e in events if e.start_time >= now - _RECENT]
+    return upcoming[:limit] if upcoming else events[-limit:]
+
+
+def _summarise(events: list[CalendarEvent], now: datetime) -> str:
+    return "; ".join("%s on %s" % (e.title, _on(e.start_time, now)) for e in events)
+
+
+#: Words in an event title that say what kind of booking it is. For events
+#: Tripwire did not create (Gmail adds flights on its own) and so carry no type.
+_TITLE_WORDS: list[tuple[BookingType, tuple[str, ...]]] = [
+    (BookingType.FLIGHT, ("flight", "airlines", "airways", "indigo", "air india", "akasa", "spicejet", "vistara")),
+    (BookingType.TRAIN, ("train", "irctc", "rail", "pnr", "express", "vande bharat", "shatabdi", "rajdhani")),
+    (BookingType.HOTEL, ("hotel", "stay", "check-in", "check in", "resort", "airbnb", "oyo", "hostel")),
+    (BookingType.RIDE, ("cab", "taxi", "ride", "uber", "ola", "rapido", "pickup")),
+    (BookingType.RESTAURANT, ("table", "restaurant", "dinner", "lunch", "dineout", "brunch")),
+    (BookingType.APPOINTMENT, ("appointment", "dentist", "doctor", "checkup", "check-up", "clinic", "consultation",
+                               "physio", "practo", "salon")),
+]
+
+
+def guess_type(title: str) -> BookingType | None:
+    """Best guess from a title, or None when it does not look like a booking."""
+    lowered = " %s " % re.sub(r"[^a-z0-9-]+", " ", (title or "").lower())
+    for booking_type, words in _TITLE_WORDS:
+        if any(" %s " % word in lowered for word in words):
+            return booking_type
+    return None
 
 
 def _type_from(slots: dict) -> BookingType:
@@ -553,9 +625,46 @@ def _type_from(slots: dict) -> BookingType:
     return BookingType.FLIGHT
 
 
+#: "to Kempegowda Airport", "to the station": where a ride goes is any place,
+#: not only the cities the NLU lexicon knows. Stops before the date or time.
+_RIDE_TO = re.compile(
+    r"\bto\s+(?P<place>(?:the\s+)?[\w'.-]+(?:\s+(?!tomorrow\b|today\b|tonight\b|on\b|at\b|by\b|for\b|from\b)[\w'.-]+){0,4}?)"
+    r"(?=\s+(?:tomorrow|today|tonight|on|at|by|for|from)\b|[.,!?]|$)",
+    re.I,
+)
+
+
+_RIDE_BRAND = re.compile(r"\b(?P<brand>uber|ola|rapido|cab|taxi)\b", re.I)
+
+
+def _with_ride_destination(frame: Frame, text: str, tape: "_Tape") -> Frame:
+    """A ride the NLU half-read: "book an uber" (a brand its lexicon lacks) gets
+    its type, and a destination outside the city lexicon the words after "to"."""
+    if frame.intent is not Intent.CREATE_BOOKING:
+        return frame
+    slots = {s.name: s.value for s in frame.slots}
+    brand = _RIDE_BRAND.search(text)
+    if not slots.get("booking_type") and brand:
+        kind = Slot(name="booking_type", start=brand.start(), end=brand.end(), value=brand.group("brand").lower())
+        frame = replace(frame, slots=frame.slots + (kind,))
+        slots["booking_type"] = kind.value
+        tape.think("ride type read from the text: %r" % kind.value)
+    if slots.get("destination") or _type_from(slots) is not BookingType.RIDE:
+        return frame
+    match = _RIDE_TO.search(text)
+    if not match:
+        return frame
+    place = match.group("place").strip()
+    tape.think("ride destination read from the text: %r" % place)
+    slot = Slot(name="destination", start=match.start("place"), end=match.end("place"), value=place)
+    return replace(frame, slots=frame.slots + (slot,))
+
+
 def _title_from(slots: dict) -> str | None:
     parts = [slots.get("booking_type"), "to" if slots.get("destination") else None, slots.get("destination")]
     title = " ".join(p for p in parts if p).strip()
+    # "Cab to MG Road", not "cab to MG Road": it is what the calendar shows.
+    title = title[:1].upper() + title[1:]
     return title or slots.get("provider")
 
 

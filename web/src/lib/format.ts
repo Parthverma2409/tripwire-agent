@@ -22,7 +22,9 @@ export function time(iso: string): string {
 }
 
 export function dateLong(iso: string): string {
-  return parseLocal(iso).toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short" });
+  const d = parseLocal(iso);
+  const year = d.getFullYear() !== new Date().getFullYear() ? { year: "numeric" as const } : {};
+  return d.toLocaleDateString(undefined, { weekday: "short", day: "numeric", month: "short", ...year });
 }
 
 export function dateTime(iso: string): string {

@@ -18,8 +18,16 @@ Tripwire company. The developer never receives your data.
   Google sign-in token is kept there too, encrypted with AES-256-GCM. The encryption key
   lives in your operating system's keyring.
 - **Google.** Tripwire talks directly to Google's Gmail and Calendar APIs.
-- **Telegram (only if you turn it on).** Approval questions, including the booking they are
-  about, are sent to your own Telegram bot and pass through Telegram's servers.
+- **Telegram (only if you turn it on).** Approval questions and change notifications,
+  including the booking they are about, are sent to your own Telegram bot and pass through
+  Telegram's servers.
+- **Swiggy (only if you connect it).** Tripwire calls Swiggy's official MCP servers as you,
+  to read active food orders and Dineout reservations it made, to look up restaurants and
+  free slots near the area you set, and to book a table only after you approve it. The
+  Swiggy sign-in is stored encrypted like the Google one. Nothing from Gmail or your
+  calendar is sent to Swiggy.
+- **Uber.** No connection. A ride's *Book in Uber* button opens Uber with the drop-off
+  in the link; nothing is sent until you press it.
 - **Local AI (only if you turn it on).** Ollama runs on your own machine; nothing leaves it.
 - **Browser voice input (only if you use it).** Your browser's speech recognition may send
   audio to Google or Microsoft. Local Whisper avoids this.
@@ -37,7 +45,8 @@ models.
 
 ## Deleting your data
 
-1. In Tripwire, open **Connections** → Google → **Disconnect**. This deletes the stored token.
+1. In Tripwire, open **Connections** → Google (and Swiggy) → **Disconnect**. This deletes the
+   stored sign-ins.
 2. Delete the `~/.booking-sync/` folder to remove everything else.
 3. Optionally revoke access at <https://myaccount.google.com/permissions>.
 

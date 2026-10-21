@@ -14,6 +14,8 @@ export interface CalEvent {
   ref: string | null;
   location: string | null;
   alarm: string | null;
+  /** The type was read off the title (an event Gmail or you created). */
+  type_guessed?: boolean;
 }
 
 export interface Trust {
@@ -39,14 +41,16 @@ export interface Confirmation {
   request_id: string;
   status: "pending" | "queued";
   prompt: string;
-  action: "DELETE" | "UPDATE";
+  action: "DELETE" | "UPDATE" | "BOOK";
   created_at: string;
   timeout_at: string;
   seconds_left: number;
   before: CalEvent | null;
   after: CalEvent | null;
-  source: "email" | "voice" | null;
+  source: "email" | "voice" | "swiggy" | null;
   meta: {
+    kind?: string;
+    guests?: number;
     stage?: string;
     vendor_id?: string | null;
     trust?: Trust;
@@ -78,7 +82,7 @@ export interface MailRow {
 export interface ActivityRow {
   id: number;
   ts: string;
-  channel: "app" | "telegram" | "gmail" | "imap" | "demo" | "upload" | "system";
+  channel: "app" | "telegram" | "gmail" | "imap" | "demo" | "upload" | "system" | "swiggy";
   kind: string;
   input: string | null;
   status: Outcome;
@@ -122,8 +126,10 @@ export interface Status {
     telegram: ConnectionState;
     ollama: ConnectionState;
     voice: ConnectionState;
+    swiggy: ConnectionState;
   };
   google: { configured: boolean; connected: boolean; scopes?: string[]; redirect_uri?: string };
+  swiggy: { connected: boolean; redirect_uri?: string };
   mail_channel: string;
   last_scan: { at: string; handled: number } | null;
   settings: {
@@ -146,9 +152,71 @@ export interface Status {
     ollama_host: string;
     ollama_model: string;
     whisper_model: string;
+    notify_changes: boolean;
+    dining_area: string;
+    dining_pin: string;
     home: string;
   };
   ingest: { stats: { received: number; accepted: number; quarantined: number }; stored: number };
+}
+
+export interface BookingHistory {
+  at: string;
+  type: "CREATE" | "UPDATE" | "DELETE";
+  channel: string;
+  message: string;
+}
+
+/** GET /api/events/{id}: the calendar event plus everything Tripwire knows. */
+export interface EventDetail {
+  event: CalEvent | null;
+  /** The event is no longer on the calendar (deleted). */
+  gone: boolean;
+  google: {
+    html_link?: string | null;
+    description?: string;
+    origin?: "gmail" | "tripwire" | "calendar";
+    source_url?: string | null;
+    source_title?: string | null;
+    created?: string | null;
+    updated?: string | null;
+  };
+  booking: {
+    booking_type?: string;
+    status?: string;
+    source?: string;
+    booking_ref?: string;
+    destination?: string;
+    location?: string;
+    pickup?: string;
+    dropoff?: string;
+    provider?: string;
+    venue?: string;
+    party_size?: number;
+    first_seen?: string;
+    deleted?: boolean;
+    [key: string]: unknown;
+  };
+  email: {
+    message_id?: string;
+    subject?: string;
+    sender?: string;
+    stage?: string;
+    vendor_id?: string;
+    channel?: string;
+    trust?: string;
+  } | null;
+  history: BookingHistory[];
+  links: { calendar?: string; email?: string; uber?: string; swiggy?: string };
+}
+
+export interface SwiggyOrder {
+  id: string;
+  title: string | null;
+  subtitle: string | null;
+  status: string | null;
+  eta: string | null;
+  progress: string | null;
 }
 
 export interface CommandResult {

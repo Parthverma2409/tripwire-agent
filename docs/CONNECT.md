@@ -14,7 +14,10 @@ Only step 1 is required. Everything after it is optional.
 | [4. Telegram approvals](#4-optional-telegram-approvals) | Approve / Decline buttons on your phone | 5 min | Recommended |
 | [5. Local AI (Ollama)](#5-optional-local-ai-ollama) | Reads unusual emails the rules miss | 10 min | Optional |
 | [6. Local voice (Whisper)](#6-optional-local-voice-whisper) | Speech-to-text that never leaves your PC | 5 min | Optional |
-| [7. Check everything](#7-check-everything) | Green ticks on the Connections page | 2 min | Yes |
+| [7. Swiggy](#7-optional-swiggy) | Food order updates; Dineout tables booked by asking | 3 min | Optional |
+| [8. Uber](#8-uber-no-setup) | Rides from Uber emails, one-tap *Book in Uber* | 0 min | Nothing to do |
+| [9. Notifications](#9-notifications) | A message every time your calendar changes | 1 min | Recommended |
+| [10. Check everything](#10-check-everything) | Green ticks on the Connections page | 2 min | Yes |
 
 All settings live in one file, **`.env`**, in the project folder. The launcher creates
 it from `.env.example` on first run. `.env` is git-ignored: never commit it or paste it
@@ -26,7 +29,8 @@ anywhere.
 
 You need **Python 3.11+** and **Node.js 20+**.
 
-**Windows:** double-click **`run_app.bat`**.
+**Windows:** double-click **Tripwire** on the Desktop (or find it in the Start menu). It
+runs `run_app.bat` in the project folder; you can double-click that directly too.
 **macOS / Linux:** `./run_app.sh`
 
 The first run creates `.venv`, installs everything, builds the web UI and opens
@@ -196,8 +200,9 @@ delete anything.
 ## 4. (Optional) Telegram approvals
 
 When an email asks to cancel or move something, Tripwire needs your OK. With Telegram set
-up, the question comes to your phone with **Approve** and **Decline** buttons. You can also
-message the bot commands like *"what do I have tomorrow?"*.
+up, the question comes to your phone with **Approve** and **Decline** buttons, and you get
+a short message every time your calendar actually changes (step 9). You can also message
+the bot commands like *"what do I have tomorrow?"*.
 
 1. In Telegram, open **@BotFather** → send `/newbot` → choose a name (e.g. *My Tripwire*)
    and a username ending in `bot`. BotFather replies with a **token** like
@@ -274,7 +279,64 @@ model (~150 MB), so it takes a little longer.
 
 ---
 
-## 7. Check everything
+## 7. (Optional) Swiggy
+
+Swiggy publishes official connectors for AI apps (MCP servers, the same ones Claude and
+ChatGPT use). Tripwire signs in through them, so it never sees your OTP, and it can only
+do what those connectors allow.
+
+What you get:
+
+- **Food order updates.** While an order is in progress, each status change (*Preparing*,
+  *Out for delivery*, ...) becomes a notification. Read-only.
+- **Dineout tables by asking.** On Today or in Telegram: *"book a table at Toit for 4
+  tomorrow at 8pm on Swiggy"*. Tripwire finds the restaurant and the closest **free**
+  slot, then asks **Book this table?**. Only your yes books it, and the reservation lands
+  on your calendar. Paid deals need a UPI payment, so they stay in the Swiggy app.
+- **Cancellations are watched.** If the restaurant cancels a table Tripwire booked, you're
+  asked before the calendar event is removed, like any other cancellation.
+
+Setup:
+
+1. **Connections → Swiggy → Connect Swiggy.** Sign in with your phone number and the OTP
+   Swiggy sends. You come back to Tripwire, connected.
+2. **Settings → Swiggy Dineout:** your dining area (e.g. *Indiranagar, Bangalore*) and its
+   PIN code. Swiggy turns them into map coordinates once.
+3. **Connections → Swiggy → Test** lists the tools Swiggy gave access to.
+
+The sign-in lasts 30 days and renews itself while Tripwire runs. Swiggy suggests not
+using the Swiggy app at the same moment as a booking, to avoid session clashes. Swiggy
+India accounts only.
+
+---
+
+## 8. Uber (no setup)
+
+Uber doesn't offer personal apps an API for rides or trip history (its ride API is for
+approved partners), so Tripwire doesn't pretend to have one. Instead:
+
+- **Uber Reserve** confirmation emails and their calendar invites are read like any other
+  booking, so the ride appears on your calendar with pickup time and reference.
+- Every ride's detail page has **Book this ride in Uber**: it opens Uber (app or
+  m.uber.com) with the drop-off already filled in. You confirm the ride in Uber.
+- Typed rides work too: *"book an uber to Kempegowda Airport tomorrow at 5am"*.
+
+---
+
+## 9. Notifications
+
+On by default (**Settings → Notifications → Tell me about every change**). Every time
+Tripwire adds, moves or removes a calendar event, or a Swiggy order changes:
+
+- **Telegram** gets a short message, if step 4 is set up. Changes you made *from*
+  Telegram aren't echoed back.
+- **Desktop pop-ups:** **Settings → Desktop notifications → Allow**. They appear while
+  Tripwire is open in a background tab; when the tab is in front you see an in-page note
+  instead.
+
+---
+
+## 10. Check everything
 
 Open **Connections**. Each card shows **Connected**, **Needs setup** or **Optional**, with
 the exact reason underneath and a **Test** button.
@@ -316,6 +378,11 @@ real mail from every vendor**, so testing your own emails this way is worth doin
 | The page says *"The web UI has not been built yet"* | Node.js missing on first run | Install Node 20+, then `run_app.bat --rebuild-ui` |
 | Port 8765 already in use | Another copy is running | Close it, or start with `python -m packages.app --port 8766`. **Note:** the Google redirect URI must then use 8766 too |
 | Times are off by hours | Wrong time zone | **Settings → Time zone** |
+| Inbox stays empty | `BSYNC_GMAIL_QUERY` points at a label with no mail | Create the filter in step 2, or delete the line from `.env` to use Tripwire's built-in booking search |
+| Telegram shows *getUpdates failed (URLError)* | `api.telegram.org` is unreachable from your network (some networks block it) | Try another network or a VPN; Tripwire retries on its own and the card turns green once it gets through |
+| *"Swiggy sign-in expired"* | 30 days without use, or you signed out elsewhere | **Connections → Swiggy → Connect Swiggy** again |
+| *"Set your dining area and PIN code"* | Dineout needs a place to search | **Settings → Swiggy Dineout** |
+| *"… has no free table near …"* | Only paid deals, or nothing within 45 minutes of the time | Pick another time, or book the paid deal in the Swiggy app |
 
 ---
 
@@ -324,6 +391,8 @@ real mail from every vendor**, so testing your own emails this way is worth doin
 | What | Where | Protected by |
 |---|---|---|
 | Google refresh token | `~/.booking-sync/google-token.json` | AES-256-GCM; key in your OS keyring |
+| Swiggy sign-in | `~/.booking-sync/swiggy-token.json` | AES-256-GCM; key in your OS keyring |
+| Booking details and history (pickup, party size, source email) | `~/.booking-sync/app.db` | Your user account's file permissions |
 | Inbox log, activity, scored trajectories, settings | `~/.booking-sync/app.db` (SQLite) | Your user account's file permissions |
 | Telegram / IMAP / Google client secrets | `.env` in the project folder | Git-ignored; keep it private |
 | Demo mode data | Memory only | Gone when the app stops |

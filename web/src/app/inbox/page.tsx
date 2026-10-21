@@ -9,7 +9,7 @@ import { Badge, Button, EmptyState, ErrorNote, PageHeader, Skeleton } from "@/co
 import { post, upload } from "@/lib/api";
 import { dateTime, displayRef, humanize, relative, senderName, stageLabel } from "@/lib/format";
 import { useResource, useUrlState } from "@/lib/live";
-import type { CommandResult, MailRow } from "@/lib/types";
+import type { CommandResult, MailRow, Status } from "@/lib/types";
 
 function Field({ label, value, mono = false }: { label: string; value: string | null | undefined; mono?: boolean }) {
   if (!value) return null;
@@ -94,6 +94,8 @@ export default function InboxPage() {
   const [tab, setTab] = useUrlState("tab", "all", ["all", "review"] as const);
   const all = useResource<{ mail: MailRow[] }>("/api/inbox", ["inbox"]);
   const review = useResource<{ mail: MailRow[] }>("/api/inbox?quarantine=true", ["inbox"]);
+  const status = useResource<Status>("/api/status", ["status"]);
+  const query = status.data?.mail_channel === "gmail" ? status.data.settings.gmail_query : "";
   const [scanning, setScanning] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [dragging, setDragging] = useState(false);
@@ -248,7 +250,15 @@ export default function InboxPage() {
               </Button>
             }
           >
-            Tripwire reads new booking emails every few minutes. Check now, or drop an .eml file above to try one.
+            {query ? (
+              <>
+                Tripwire only reads Gmail matching <code translate="no" className="rounded bg-surface-2 px-1 font-mono text-[12px] text-ink">{query}</code>.
+                If that label has no emails, nothing shows up here. Remove <code translate="no" className="font-mono text-[12px]">BSYNC_GMAIL_QUERY</code> from
+                .env to use Tripwire’s built-in search for airline, hotel, train, cab and restaurant senders.
+              </>
+            ) : (
+              "Tripwire reads new booking emails every few minutes. Check now, or drop an .eml file above to try one."
+            )}
           </EmptyState>
         )}
       </div>

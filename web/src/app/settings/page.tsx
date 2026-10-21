@@ -1,6 +1,6 @@
 "use client";
 
-import { RotateCcw } from "lucide-react";
+import { BellRing, RotateCcw } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useToast } from "@/components/toast";
 import { Button, Card, ErrorNote, PageHeader, Skeleton } from "@/components/ui";
@@ -56,6 +56,10 @@ export default function SettingsPage() {
   const [to, setTo] = useState("23:00");
   const [poll, setPoll] = useState(5);
   const [alarm, setAlarm] = useState(60);
+  const [notify, setNotify] = useState(true);
+  const [area, setArea] = useState("");
+  const [pin, setPin] = useState("");
+  const [permission, setPermission] = useState<NotificationPermission | "unsupported" | null>(null);
   const [saving, setSaving] = useState(false);
   const [resetting, setResetting] = useState(false);
 
@@ -65,6 +69,9 @@ export default function SettingsPage() {
     setZone(s.zone);
     setPoll(s.poll_minutes);
     setAlarm(s.alarm_minutes);
+    setNotify(s.notify_changes);
+    setArea(s.dining_area);
+    setPin(s.dining_pin);
     if (s.active_window) {
       const [a, b] = s.active_window.split("-");
       setAlways(false);
@@ -80,8 +87,22 @@ export default function SettingsPage() {
       (zone !== status.settings.zone ||
         poll !== status.settings.poll_minutes ||
         alarm !== status.settings.alarm_minutes ||
+        notify !== status.settings.notify_changes ||
+        area.trim() !== status.settings.dining_area ||
+        pin.trim() !== status.settings.dining_pin ||
         (always ? "" : `${from}-${to}`) !== status.settings.active_window),
   );
+
+  useEffect(() => {
+    setPermission("Notification" in window ? Notification.permission : "unsupported");
+  }, []);
+
+  async function askPermission() {
+    if (!("Notification" in window)) return;
+    const result = await Notification.requestPermission();
+    setPermission(result);
+    if (result === "granted") new Notification("Tripwire", { body: "Desktop notifications are on.", icon: "/favicon.ico" });
+  }
 
   useEffect(() => {
     if (!dirty) return;
@@ -99,6 +120,9 @@ export default function SettingsPage() {
         active_window: always ? "" : `${from}-${to}`,
         poll_minutes: poll,
         alarm_minutes: alarm,
+        notify_changes: notify,
+        dining_area: area.trim(),
+        dining_pin: pin.trim(),
       });
       toast("ok", "Settings saved.");
       reload();
@@ -190,6 +214,66 @@ export default function SettingsPage() {
                 </option>
               ))}
             </select>
+          </Row>
+        </Card>
+
+        <h2 className="mt-8 mb-2 text-[12px] font-semibold tracking-wide text-ink-3 uppercase">Notifications</h2>
+        <Card className="divide-y divide-line px-4 sm:px-6">
+          <Row
+            label="Tell me about every change"
+            hint="A message whenever Tripwire adds, moves or removes something on your calendar, and when a Swiggy order changes. Sent to Telegram if it’s connected."
+          >
+            <label className="flex items-center gap-2 text-sm text-ink">
+              <input
+                type="checkbox"
+                name="notify"
+                checked={notify}
+                onChange={(e) => setNotify(e.target.checked)}
+                className="size-4 rounded accent-[var(--accent)]"
+              />
+              Notify me
+            </label>
+          </Row>
+          <Row label="Desktop notifications" hint="Pop-ups on this computer while Tripwire is open in a background tab.">
+            {permission === "granted" ? (
+              <p className="text-sm text-ok">On for this browser</p>
+            ) : permission === "denied" ? (
+              <p className="text-[13px] text-ink-2">Blocked. Allow notifications for this site in your browser’s settings.</p>
+            ) : permission === "unsupported" ? (
+              <p className="text-[13px] text-ink-2">This browser doesn’t support them.</p>
+            ) : (
+              <Button type="button" size="sm" onClick={askPermission} icon={<BellRing className="size-3.5" aria-hidden />}>
+                Allow desktop notifications
+              </Button>
+            )}
+          </Row>
+        </Card>
+
+        <h2 className="mt-8 mb-2 text-[12px] font-semibold tracking-wide text-ink-3 uppercase">Swiggy Dineout</h2>
+        <Card className="divide-y divide-line px-4 sm:px-6">
+          <Row label="Dining area" hint="Where to look for restaurants, e.g. “Indiranagar, Bangalore”." htmlFor="area">
+            <input
+              id="area"
+              name="area"
+              value={area}
+              onChange={(e) => setArea(e.target.value)}
+              placeholder="Indiranagar, Bangalore…"
+              autoComplete="address-level2"
+              className={field}
+            />
+          </Row>
+          <Row label="PIN code" hint="Swiggy needs it to place the area on the map." htmlFor="pin">
+            <input
+              id="pin"
+              name="pin"
+              value={pin}
+              onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 6))}
+              inputMode="numeric"
+              placeholder="560038"
+              autoComplete="postal-code"
+              spellCheck={false}
+              className={field}
+            />
           </Row>
         </Card>
 

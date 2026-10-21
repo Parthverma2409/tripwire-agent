@@ -18,6 +18,8 @@ from .runtime import NotReady, Runtime
 
 TICK_SEC = 15
 ERROR_BACKOFF_SEC = 30
+#: Swiggy order states move in minutes; table bookings far slower.
+SWIGGY_SEC = 120
 
 
 class Scheduler:
@@ -31,6 +33,7 @@ class Scheduler:
             asyncio.create_task(self._inbox_loop(), name="inbox"),
             asyncio.create_task(self._tick_loop(), name="tick"),
             asyncio.create_task(self._telegram_loop(), name="telegram"),
+            asyncio.create_task(self._swiggy_loop(), name="swiggy"),
         ]
 
     async def stop(self) -> None:
@@ -72,6 +75,11 @@ class Scheduler:
                 continue
             try:
                 events = await asyncio.to_thread(bot.poll, 25)
+                if not self.runtime.status.telegram.get("ok"):
+                    # Reachable again after an outage: say so on the Connections page.
+                    self.runtime.status.telegram = {
+                        "ok": True, "detail": "Approvals go to chat %s" % self.runtime.settings.telegram_chat_id,
+                    }
                 for event in events:
                     await asyncio.to_thread(self.runtime.handle_bot_event, event)
             except TelegramError as exc:
@@ -79,3 +87,9 @@ class Scheduler:
                 await asyncio.sleep(ERROR_BACKOFF_SEC)
             except Exception:  # noqa: BLE001 -- keep the loop alive
                 await asyncio.sleep(ERROR_BACKOFF_SEC)
+
+    async def _swiggy_loop(self) -> None:
+        while True:
+            with contextlib.suppress(Exception):  # Runtime records Swiggy failures in status
+                await asyncio.to_thread(self.runtime.swiggy_poll)
+            await asyncio.sleep(SWIGGY_SEC)

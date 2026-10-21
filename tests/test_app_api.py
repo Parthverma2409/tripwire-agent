@@ -205,6 +205,18 @@ def test_email_questions_go_to_telegram_and_app_ones_do_not(clock) -> None:
     assert len([p for m, p in fake.sent if m == "sendMessage" and "reply_markup" in p]) == 2
 
 
+def test_an_unreachable_telegram_is_reported_not_a_500(clock) -> None:
+    from packages.notify.telegram import TelegramError
+
+    def offline(method, payload):
+        raise TelegramError("Telegram unreachable: timed out")
+
+    client = _client(clock, _telegram_settings(), telegram_transport=offline)
+    response = client.post("/api/connections/test/telegram", headers=H)
+    assert response.status_code == 200
+    assert response.json() == {"ok": False, "detail": "Couldn't reach Telegram: Telegram unreachable: timed out"}
+
+
 def test_a_telegram_button_resolves_the_question(clock) -> None:
     fake = FakeTelegram()
     client = _client(clock, _telegram_settings(), telegram_transport=fake)

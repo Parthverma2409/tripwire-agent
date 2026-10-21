@@ -1,6 +1,6 @@
 "use client";
 
-import { CalendarCheck2, CalendarPlus, Inbox, RefreshCw, ShieldCheck, TriangleAlert } from "lucide-react";
+import { Bike, CalendarCheck2, CalendarPlus, Inbox, RefreshCw, ShieldCheck, TriangleAlert } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { ApprovalCard } from "@/components/approval-card";
@@ -11,7 +11,7 @@ import { Button, Card, EmptyState, ErrorNote, SectionHeader, Skeleton } from "@/
 import { post } from "@/lib/api";
 import { parseLocal, relative } from "@/lib/format";
 import { useNow, useResource } from "@/lib/live";
-import type { CalEvent, Confirmation, MailRow, Status } from "@/lib/types";
+import type { CalEvent, Confirmation, MailRow, Status, SwiggyOrder } from "@/lib/types";
 
 const HORIZON_DAYS = 14;
 
@@ -29,6 +29,9 @@ export default function TodayPage() {
   const status = useResource<Status>("/api/status", ["scan", "status"]);
   const quarantine = useResource<{ mail: MailRow[] }>("/api/inbox?quarantine=true", ["inbox"]);
   const [scanning, setScanning] = useState(false);
+  const swiggyOn = Boolean(status.data?.connections.swiggy?.ok);
+  const orders = useResource<{ orders: SwiggyOrder[] }>(swiggyOn ? "/api/swiggy/orders" : null, ["swiggy"]);
+  const active = swiggyOn ? orders.data?.orders ?? [] : [];
 
   const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
   const horizon = new Date(start.getTime() + HORIZON_DAYS * 86_400_000);
@@ -124,6 +127,38 @@ export default function TodayPage() {
               Check inbox now
             </Button>
           </Card>
+
+          {active.length ? (
+            <Card className="p-4">
+              <div className="flex items-center gap-2 text-sm font-semibold text-ink">
+                <Bike className="size-4 text-[#fc8019]" aria-hidden /> Swiggy order{active.length === 1 ? "" : "s"}
+              </div>
+              <ul className="mt-2 space-y-3">
+                {active.map((o) => (
+                  <li key={o.id} className="text-[13px]">
+                    <p className="font-medium text-ink">{o.title || "Your order"}</p>
+                    <p className="text-ink-2">
+                      {o.status || "In progress"}
+                      {o.eta ? ` · ${o.eta}` : ""}
+                    </p>
+                    {o.progress ? (
+                      <div
+                        className="mt-1.5 h-1 overflow-hidden rounded-full bg-surface-2"
+                        role="progressbar"
+                        aria-label="Order progress"
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-valuenow={Number.parseFloat(o.progress) || 0}
+                      >
+                        <div className="h-full rounded-full bg-[#fc8019]" style={{ width: `${Math.min(100, Number.parseFloat(o.progress) || 0)}%` }} />
+                      </div>
+                    ) : null}
+                  </li>
+                ))}
+              </ul>
+              <p className="mt-3 text-[12px] text-ink-3">You’ll get a notification each time the status changes.</p>
+            </Card>
+          ) : null}
 
           {review > 0 ? (
             <Link href="/inbox/?tab=review" className="block">

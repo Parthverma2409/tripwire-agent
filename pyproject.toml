@@ -19,6 +19,8 @@ app = [
     "python-multipart>=0.0.9",
     "cryptography>=42",
     "keyring>=25",
+    # the research dashboard's index builder, reused for the live corpus
+    "jsonschema>=4.20",
 ]
 # Browser end-to-end tests of the app UI.
 e2e = ["pytest-playwright>=0.5"]
