@@ -8,6 +8,25 @@ booking notification in the first place. UC2's stated open issue is telling
 marketing mail from genuine change mail, and a false positive here writes into a
 real calendar. So classification is conservative: anything that smells
 promotional is dropped before a single field is read.
+
+STAGES
+------
+``extract_bookings`` tries the most reliable source first and stops at the first
+one that yields a booking. ``stage`` on the result records which one answered,
+and the agent copies it into the trajectory.
+
+  1. ``schema.org``  reservation markup in the HTML (see structured.py). Typed
+                     fields written by the vendor's booking system.
+  2. ``ics``         an iCalendar attachment (see ics.py).
+  3. promotional filter -- everything below reads prose, so prose that is
+                     selling something is dropped here.
+  4. ``vendor:<id>`` the rules below, with the sender's profile supplying the
+                     booking type and reference shape (see vendors.py).
+     ``rules``       the same rules for an unknown sender.
+
+The machine-readable stages run before the promotional filter on purpose: real
+booking mail carries an "unsubscribe" footer, and a reservation the vendor's
+system emitted as data is not an advert however the footer reads.
 """
 
 from __future__ import annotations
@@ -18,15 +37,31 @@ from datetime import datetime
 
 from packages.core.models import BookingStatus, BookingType
 
+from .html_text import html_to_text
+from .ics import parse_ics
 from .resolve import resolve_datetime
+from .structured import find_reservations
+from .vendors import Vendor, identify
 
-#: Marketing tells on itself. Checked before anything else, and a hit means the
-#: email is discarded outright rather than parsed and then second-guessed.
+#: Marketing tells on itself. Checked before any prose is read, and a hit means
+#: the email is discarded outright rather than parsed and then second-guessed.
 _PROMO = re.compile(
     r"(unsubscribe|save \d+%|off your next|limited[- ]time|book now and|fare sale|"
     r"deals? of the (day|week)|earn \d+ points|exclusive offer|don'?t miss out)",
     re.I,
 )
+#: The same, minus "unsubscribe", for a known vendor's mail. Their transactional
+#: emails carry an unsubscribe footer too, and dropping a real cancellation from
+#: IndiGo because of its footer would leave a dead flight on the calendar.
+_PROMO_KNOWN_SENDER = re.compile(
+    r"(save \d+%|off your next|limited[- ]time|book now and|fare sale|"
+    r"deals? of the (day|week)|earn \d+ points|exclusive offer|don'?t miss out)",
+    re.I,
+)
+
+#: Below this much plain text, the text/plain part is a "view this in your
+#: browser" stub and the HTML is the real email.
+_STUB_BODY_CHARS = 80
 
 _STATUS_RULES: list[tuple[BookingStatus, re.Pattern]] = [
     (BookingStatus.CANCELLED, re.compile(r"\b(cancelled|canceled|cancellation confirmed|has been cancelled)\b", re.I)),
@@ -72,6 +107,13 @@ class EmailExtraction:
     title: str | None = None
     reason: str | None = None
     notes: list[str] = field(default_factory=list)
+    #: Which stage produced this: schema.org, ics, vendor:<id>, rules, or an LLM.
+    stage: str = "rules"
+    vendor_id: str | None = None
+    end_time: datetime | None = None
+    location: str | None = None
+    #: Subtype fields (flight_number, venue, pickup ...) for the booking class.
+    details: dict = field(default_factory=dict)
 
     @property
     def is_actionable(self) -> bool:
@@ -79,23 +121,134 @@ class EmailExtraction:
         return bool(self.is_booking_related and self.status and self.date_time and self.title)
 
 
-def extract_email(subject: str, body: str, now: datetime) -> EmailExtraction:
-    blob = "%s\n%s" % (subject, body)
+def extract_email(
+    subject: str,
+    body: str,
+    now: datetime,
+    *,
+    html: str = "",
+    attachments: tuple = (),
+    sender: str = "",
+    zone: str | None = None,
+) -> EmailExtraction:
+    """The first booking in the email. See ``extract_bookings`` for all of them."""
+    return extract_bookings(subject, body, now, html=html, attachments=attachments, sender=sender, zone=zone)[0]
 
-    if _PROMO.search(blob):
+
+def extract_bookings(
+    subject: str,
+    body: str,
+    now: datetime,
+    *,
+    html: str = "",
+    attachments: tuple = (),
+    sender: str = "",
+    zone: str | None = None,
+) -> list[EmailExtraction]:
+    """Every booking the email describes. Never empty.
+
+    A round trip arrives as one email with two reservations, and dropping the
+    return leg is a missed flight -- so markup and .ics stages return every
+    reservation they find. The prose rules find at most one.
+    """
+    vendor = identify(sender) if sender else None
+
+    structured = _from_markup(html, zone, vendor)
+    if structured:
+        return structured
+
+    calendar = _from_ics(attachments, subject, body, zone, vendor)
+    if calendar:
+        return calendar
+
+    text = body
+    if html and len(body.strip()) < _STUB_BODY_CHARS:
+        text = html_to_text(html)
+    return [_from_prose(subject, text, now, vendor)]
+
+
+def _from_markup(html: str, zone: str | None, vendor: Vendor | None) -> list[EmailExtraction]:
+    out = []
+    for reservation in find_reservations(html, zone):
+        problem = reservation.problem
+        out.append(
+            EmailExtraction(
+                is_booking_related=reservation.status is not None and problem is None,
+                status=reservation.status,
+                booking_type=reservation.booking_type,
+                booking_ref=reservation.booking_ref,
+                date_time=reservation.start,
+                title=reservation.title or None,
+                reason=problem,
+                notes=["schema.org %s" % reservation.schema_type],
+                stage="schema.org",
+                vendor_id=vendor.id if vendor else None,
+                end_time=reservation.end,
+                location=reservation.location,
+                details=reservation.details,
+            )
+        )
+    return out
+
+
+def _from_ics(
+    attachments: tuple, subject: str, body: str, zone: str | None, vendor: Vendor | None
+) -> list[EmailExtraction]:
+    out = []
+    blob = "%s\n%s" % (subject, body)
+    email_ref = (vendor.find_ref(blob) if vendor else None) or _generic_ref(blob)
+    for attachment in attachments:
+        if getattr(attachment, "mime_type", "") != "text/calendar":
+            continue
+        for event in parse_ics(attachment.text(), zone):
+            title = event.summary or None
+            booking_type = (vendor.booking_type if vendor else None) or next(
+                (t for t, pattern in _TYPE_RULES if pattern.search("%s\n%s" % (event.summary, blob))), None
+            )
+            extraction = EmailExtraction(
+                is_booking_related=True,
+                status=event.status,
+                booking_type=booking_type,
+                booking_ref=email_ref or (event.uid.upper() if event.uid else None),
+                date_time=event.start,
+                title=title,
+                notes=["ics SEQUENCE=%d" % event.sequence],
+                stage="ics",
+                vendor_id=vendor.id if vendor else None,
+                end_time=event.end,
+                location=event.location,
+            )
+            if not extraction.is_actionable:
+                extraction.reason = "unparseable: calendar attachment has no start time or title"
+            out.append(extraction)
+    return out
+
+
+def _generic_ref(blob: str) -> str | None:
+    match = _REF.search(blob)
+    return match.group(1).upper() if match else None
+
+
+def _from_prose(subject: str, body: str, now: datetime, vendor: Vendor | None) -> EmailExtraction:
+    blob = "%s\n%s" % (subject, body)
+    stage = "vendor:%s" % vendor.id if vendor else "rules"
+    promo = _PROMO_KNOWN_SENDER if vendor else _PROMO
+
+    if promo.search(blob):
         # UC2 open issue. Dropping a genuine change email is recoverable -- the
         # vendor resends, and the user can still act. Acting on a marketing email
         # is not: it raises a destructive prompt about a booking nothing changed.
-        return EmailExtraction(False, reason="promotional", notes=["matched a marketing pattern"])
+        return EmailExtraction(False, reason="promotional", notes=["matched a marketing pattern"], stage=stage)
 
     status = next((s for s, pattern in _STATUS_RULES if pattern.search(blob)), None)
     if status is None:
-        return EmailExtraction(False, reason="no booking status found")
+        return EmailExtraction(False, reason="no booking status found", stage=stage)
 
-    booking_type = next((t for t, pattern in _TYPE_RULES if pattern.search(blob)), None)
+    booking_type = (vendor.booking_type if vendor else None) or next(
+        (t for t, pattern in _TYPE_RULES if pattern.search(blob)), None
+    )
 
-    ref_match = _REF.search(blob)
-    booking_ref = ref_match.group(1).upper() if ref_match else None
+    booking_ref = (vendor.find_ref(blob) if vendor else None) or _generic_ref(blob)
 
     date_time, notes = _find_datetime(blob, now)
 
@@ -109,6 +262,8 @@ def extract_email(subject: str, body: str, now: datetime) -> EmailExtraction:
         date_time=date_time,
         title=title or None,
         notes=notes,
+        stage=stage,
+        vendor_id=vendor.id if vendor else None,
     )
     if not extraction.is_actionable:
         # UC2 E1: flagged for manual review, calendar untouched.

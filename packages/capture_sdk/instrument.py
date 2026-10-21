@@ -63,13 +63,16 @@ class InstrumentedAgent:
         caught: they propagate exactly as they would uninstrumented, and no
         half-built trajectory is captured for them.
         """
-        trajectory = getattr(result, "trajectory", None)
-        if not isinstance(trajectory, dict) or not trajectory:
-            return
-        try:
-            self._client.capture(trajectory)
-        except Exception:  # noqa: BLE001 -- see docstring
-            pass
+        # A multi-booking email returns one result carrying the others as
+        # followups; each has its own trajectory and each is captured.
+        for each in [result, *(getattr(result, "followups", None) or [])]:
+            trajectory = getattr(each, "trajectory", None)
+            if not isinstance(trajectory, dict) or not trajectory:
+                continue
+            try:
+                self._client.capture(trajectory)
+            except Exception:  # noqa: BLE001 -- see docstring
+                pass
 
 
 def instrument(agent: Any, client: Any, methods: Iterable[str] = CAPTURED_METHODS) -> InstrumentedAgent:

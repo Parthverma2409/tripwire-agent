@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
-from email import message_from_string
 from pathlib import Path
 
+from .eml import parse_eml
 from .mail import RawEmail
 
 
@@ -19,18 +19,9 @@ class FakeInbox:
         self._queue.append(email)
 
     def deliver_fixture(self, path: Path, message_id: str | None = None) -> RawEmail:
-        msg = message_from_string(path.read_text(encoding="utf-8"))
-        body = msg.get_payload()
-        if isinstance(body, list):
-            body = "\n".join(str(p.get_payload()) for p in body)
-        email = RawEmail(
-            message_id=message_id or msg.get("Message-ID", path.stem),
-            sender=msg.get("From", ""),
-            subject=msg.get("Subject", ""),
-            body=str(body),
-            received_at=datetime.now(timezone.utc),
-            headers=dict(msg.items()),
-        )
+        parsed = parse_eml(path.read_bytes(), message_id=message_id)
+        # Fixtures are replayed "now", whatever their Date header says.
+        email = replace(parsed, received_at=datetime.now(timezone.utc))
         self.deliver(email)
         return email
 

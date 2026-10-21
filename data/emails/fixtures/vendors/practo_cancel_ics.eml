@@ -1,0 +1,31 @@
+From: Practo <appointments@practo.com>
+To: traveller@example.com
+Subject: Appointment cancelled
+Date: Tue, 18 Aug 2026 08:00:00 +0530
+Message-ID: <synthetic-practo-cancel-1@practo.com>
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="b5"
+
+--b5
+Content-Type: text/plain; charset=utf-8
+
+SYNTHETIC FIXTURE - not a real Practo email.
+Your appointment with Dr Rao has been cancelled.
+
+--b5
+Content-Type: text/calendar; charset=utf-8; method=CANCEL
+Content-Disposition: attachment; filename="cancel.ics"
+
+BEGIN:VCALENDAR
+VERSION:2.0
+METHOD:CANCEL
+BEGIN:VEVENT
+UID:appt-30017@practo.example
+SEQUENCE:1
+DTSTART:20260822T120000Z
+SUMMARY:Consultation with Dr Rao
+STATUS:CANCELLED
+END:VEVENT
+END:VCALENDAR
+
+--b5--

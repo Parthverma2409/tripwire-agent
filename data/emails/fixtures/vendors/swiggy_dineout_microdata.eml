@@ -1,0 +1,24 @@
+From: Swiggy Dineout <no-reply@swiggy.in>
+To: traveller@example.com
+Subject: Table reserved at Toit
+Date: Mon, 17 Aug 2026 15:00:00 +0530
+Message-ID: <synthetic-swiggy-1@swiggy.in>
+MIME-Version: 1.0
+Content-Type: text/html; charset=utf-8
+
+<html><body>
+<p>SYNTHETIC FIXTURE - not a real Swiggy email.</p>
+<div itemscope itemtype="http://schema.org/FoodEstablishmentReservation">
+  <meta itemprop="reservationNumber" content="DO-55120"/>
+  <link itemprop="reservationStatus" href="http://schema.org/ReservationConfirmed"/>
+  <meta itemprop="startTime" content="2026-08-22T20:00:00+05:30"/>
+  <meta itemprop="partySize" content="4"/>
+  <div itemprop="reservationFor" itemscope itemtype="http://schema.org/FoodEstablishment">
+    <span itemprop="name">Toit</span>
+    <div itemprop="address" itemscope itemtype="http://schema.org/PostalAddress">
+      <span itemprop="streetAddress">298 100 Feet Road, Indiranagar</span>
+      <span itemprop="addressLocality">Bengaluru</span>
+    </div>
+  </div>
+</div>
+</body></html>

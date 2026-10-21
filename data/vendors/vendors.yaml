@@ -1,0 +1,142 @@
+# Vendor profiles for the email extractor (packages/nlp/vendors.py).
+#
+# A profile does two jobs:
+#   1. Hints for parsing: the booking type a sender always means, and the shape
+#      of its booking reference (an IRCTC PNR is ten digits, which the generic
+#      reference pattern deliberately does not accept).
+#   2. Identity for the trust check (packages/nlp/trust.py): a cancellation that
+#      claims to be from IndiGo but whose DKIM signature is not goindigo.in is
+#      flagged to the user before they approve anything.
+#
+# STATUS: written from public knowledge of these senders, NOT verified against
+# real mail from each of them. Formats drift. Run
+#     python -m packages.nlp check-email path/to/real.eml
+# on your own mail (keep it in data/private/, which is git-ignored) and adjust.
+#
+# Fields
+#   id            stable key, used in trajectories as stage "vendor:<id>"
+#   name          display name
+#   domains       sender domains; subdomains match (mail.goindigo.in -> goindigo.in)
+#   booking_type  flight | train | hotel | ride | restaurant | appointment, or omit
+#                 for sellers of several kinds (OTAs) and let the rules decide
+#   ref_patterns  regexes with ONE capture group for the booking reference; tried
+#                 in order before the generic reference pattern
+
+# ------------------------------------------------------------------- OTAs
+- id: makemytrip
+  name: MakeMyTrip
+  domains: [makemytrip.com, mmtcdn.com]
+  ref_patterns:
+    - '(?i:booking\s*id)\s*[:#-]?\s*([A-Z]{2}\d[A-Z0-9]{6,14})\b'
+
+- id: goibibo
+  name: Goibibo
+  domains: [goibibo.com]
+  ref_patterns:
+    - '(?i:booking\s*id)\s*[:#-]?\s*([A-Z]{2}\d[A-Z0-9]{6,14})\b'
+
+- id: cleartrip
+  name: Cleartrip
+  domains: [cleartrip.com]
+  ref_patterns:
+    - '(?i:trip\s*id)\s*[:#-]?\s*(\d{8,12})\b'
+
+- id: ixigo
+  name: ixigo
+  domains: [ixigo.com]
+
+- id: yatra
+  name: Yatra
+  domains: [yatra.com]
+
+- id: bookingcom
+  name: Booking.com
+  domains: [booking.com]
+  booking_type: hotel
+  ref_patterns:
+    - '(?i:confirmation\s*(?:number|no\.?))\s*[:#-]?\s*(\d{9,10})\b'
+
+- id: agoda
+  name: Agoda
+  domains: [agoda.com]
+  booking_type: hotel
+  ref_patterns:
+    - '(?i:booking\s*id)\s*[:#-]?\s*(\d{8,10})\b'
+
+- id: airbnb
+  name: Airbnb
+  domains: [airbnb.com]
+  booking_type: hotel
+  ref_patterns:
+    - '(?i:confirmation\s*code)\s*[:#-]?\s*([A-Z0-9]{10})\b'
+
+- id: oyo
+  name: OYO
+  domains: [oyorooms.com, oyo.com]
+  booking_type: hotel
+
+# --------------------------------------------------------------- airlines
+- id: indigo
+  name: IndiGo
+  domains: [goindigo.in]
+  booking_type: flight
+  ref_patterns:
+    - '(?i:pnr|booking\s*reference)\s*[:#-]?\s*([A-Z0-9]{6})\b'
+
+- id: airindia
+  name: Air India
+  domains: [airindia.com, airindia.in, airindiaexpress.com]
+  booking_type: flight
+  ref_patterns:
+    - '(?i:pnr|booking\s*reference)\s*[:#-]?\s*([A-Z0-9]{6})\b'
+
+- id: akasa
+  name: Akasa Air
+  domains: [akasaair.com]
+  booking_type: flight
+  ref_patterns:
+    - '(?i:pnr|booking\s*reference)\s*[:#-]?\s*([A-Z0-9]{6})\b'
+
+- id: spicejet
+  name: SpiceJet
+  domains: [spicejet.com]
+  booking_type: flight
+  ref_patterns:
+    - '(?i:pnr|booking\s*reference)\s*[:#-]?\s*([A-Z0-9]{6})\b'
+
+# ------------------------------------------------------------------- rail
+- id: irctc
+  name: IRCTC
+  domains: [irctc.co.in]
+  booking_type: train
+  ref_patterns:
+    - '(?i:pnr\s*(?:no\.?|number)?)\s*[:#-]?\s*(\d{10})\b'
+
+# ------------------------------------------------------- rides and dining
+- id: uber
+  name: Uber
+  domains: [uber.com]
+  booking_type: ride
+
+- id: ola
+  name: Ola
+  domains: [olacabs.com]
+  booking_type: ride
+  ref_patterns:
+    - '(?i:crn)\s*[:#-]?\s*(\d{6,12})\b'
+
+- id: swiggy
+  name: Swiggy Dineout
+  domains: [swiggy.in, swiggy.com, dineout.co.in]
+  booking_type: restaurant
+
+- id: zomato
+  name: Zomato
+  domains: [zomato.com]
+  booking_type: restaurant
+
+# ----------------------------------------------------------- appointments
+- id: practo
+  name: Practo
+  domains: [practo.com]
+  booking_type: appointment

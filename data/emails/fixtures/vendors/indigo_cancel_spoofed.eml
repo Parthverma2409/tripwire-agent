@@ -1,0 +1,30 @@
+From: IndiGo <noreply@goindigo.in>
+To: traveller@example.com
+Subject: Your flight 6E 211 has been cancelled
+Date: Tue, 18 Aug 2026 07:30:00 +0530
+Message-ID: <synthetic-indigo-spoof-1@attacker.example>
+Authentication-Results: mx.google.com; dkim=none; spf=fail smtp.mailfrom=noreply@goindigo.in; dmarc=fail (p=REJECT) header.from=goindigo.in
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="b2"
+
+--b2
+Content-Type: text/plain; charset=utf-8
+
+SYNTHETIC FIXTURE - a forged cancellation, used to test sender trust.
+Your flight has been cancelled. PNR: QX7K2M
+
+--b2
+Content-Type: text/html; charset=utf-8
+
+<html><head><script type="application/ld+json">
+{"@context": "http://schema.org", "@type": "FlightReservation",
+ "reservationNumber": "QX7K2M",
+ "reservationStatus": "http://schema.org/ReservationCancelled",
+ "reservationFor": {"@type": "Flight", "flightNumber": "211",
+   "airline": {"@type": "Airline", "iataCode": "6E"},
+   "departureAirport": {"@type": "Airport", "iataCode": "MAA"},
+   "departureTime": "2026-08-25T06:00:00+05:30",
+   "arrivalAirport": {"@type": "Airport", "iataCode": "DEL"}}}
+</script></head><body>SYNTHETIC FIXTURE</body></html>
+
+--b2--

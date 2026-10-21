@@ -4,6 +4,7 @@
     python -m packages.nlp evaluate              # baseline on the test split
     python -m packages.nlp evaluate --split dev
     python -m packages.nlp evaluate --extractor ollama --model qwen2.5:7b-instruct
+    python -m packages.nlp check-email data/private/my-booking.eml [--zone Asia/Kolkata]
 """
 
 from __future__ import annotations
@@ -81,6 +82,56 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
     return 2 if unsafe else 0
 
 
+def cmd_check_email(args: argparse.Namespace) -> int:
+    """Show what every stage makes of a real email, without touching a calendar.
+
+    The vendor profiles were written from public knowledge, not from real mail.
+    This is how a profile gets checked against the real thing: export the email
+    as .eml, keep it in data/private/ (git-ignored), and run this.
+    """
+    from datetime import datetime
+
+    from packages.nlp.email_extract import extract_bookings
+    from packages.nlp.trust import assess
+    from packages.providers.eml import parse_eml
+
+    exit_code = 0
+    for path in args.paths:
+        email = parse_eml(Path(path).read_bytes())
+        trust = assess(email.sender, email.headers)
+        now = datetime.now()
+        print("== %s" % path)
+        print("   from    : %s" % email.sender)
+        print("   subject : %s" % email.subject)
+        print("   parts   : text %d chars, html %d chars, %d calendar attachment(s)"
+              % (len(email.body), len(email.html), len(email.attachments)))
+        print("   sender  : %s%s -- %s" % (trust.level, " (%s)" % trust.vendor_name if trust.vendor_name else "", trust.reason))
+        for i, x in enumerate(extract_bookings(
+            email.subject, email.body, now, html=email.html, attachments=email.attachments,
+            sender=email.sender, zone=args.zone,
+        ), 1):
+            verdict = "ACTIONABLE" if x.is_actionable else ("ignored" if not x.is_booking_related else "QUARANTINE")
+            print("   [%d] %-10s via %s" % (i, verdict, x.stage))
+            for label, value in (
+                ("status", x.status.value if x.status else None),
+                ("type", x.booking_type.value if x.booking_type else None),
+                ("ref", x.booking_ref),
+                ("title", x.title),
+                ("start", x.date_time),
+                ("end", x.end_time),
+                ("location", x.location),
+                ("details", x.details or None),
+                ("reason", x.reason),
+                ("notes", "; ".join(x.notes) or None),
+            ):
+                if value is not None:
+                    print("       %-8s : %s" % (label, value))
+            if not x.is_actionable and x.is_booking_related:
+                exit_code = 1
+        print("")
+    return exit_code
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="packages.nlp")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -96,6 +147,11 @@ def main(argv: list[str] | None = None) -> int:
     ev.add_argument("--model", default="qwen2.5:7b-instruct")
     ev.add_argument("--show-errors", type=int, default=0, metavar="N")
     ev.set_defaults(func=cmd_evaluate)
+
+    check = sub.add_parser("check-email", help="show what the extractor makes of .eml files")
+    check.add_argument("paths", nargs="+", metavar="EML")
+    check.add_argument("--zone", default="Asia/Kolkata", help="IANA zone to show times in")
+    check.set_defaults(func=cmd_check_email)
 
     args = parser.parse_args(argv)
     return args.func(args)

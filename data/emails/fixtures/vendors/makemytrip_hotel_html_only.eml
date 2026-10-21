@@ -1,0 +1,30 @@
+From: MakeMyTrip <noreply@makemytrip.com>
+To: traveller@example.com
+Subject: Hotel booking confirmed - Booking ID NH7123456789
+Date: Mon, 17 Aug 2026 10:00:00 +0530
+Message-ID: <synthetic-mmt-hotel-1@makemytrip.com>
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="b3"
+
+--b3
+Content-Type: text/plain; charset=utf-8
+
+View this email in your browser.
+
+--b3
+Content-Type: text/html; charset=utf-8
+
+<html><body>
+<div style="display:none">Save 20% on your next trip!</div>
+<table>
+<tr><td>SYNTHETIC FIXTURE - not a real MakeMyTrip email.</td></tr>
+<tr><td>Your hotel booking is confirmed.</td></tr>
+<tr><td>Booking ID</td><td>NH7123456789</td></tr>
+<tr><td>Hotel: Taj Coromandel, Chennai</td></tr>
+<tr><td>Check-in</td><td>2026-08-29 14:00</td></tr>
+<tr><td>Nights</td><td>2</td></tr>
+</table>
+<p><a href="#">Unsubscribe</a></p>
+</body></html>
+
+--b3--

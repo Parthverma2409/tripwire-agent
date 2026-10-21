@@ -25,7 +25,8 @@ class EmailIngestionModule:
         results: list[AgentResult] = []
         for email in self.mail.fetch_new():
             result = self.agent.handle_email(email, now)
-            results.append(result)
+            # A round trip is one email and two bookings; callers see both.
+            results.extend(result.all())
             # Seen only on the way out: an exception above leaves the message
             # queued for the next scan instead of dropping a real booking change.
             self.mail.mark_seen(email.message_id)

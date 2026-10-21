@@ -1,0 +1,13 @@
+From: IRCTC <ticketadmin@irctc.co.in>
+To: traveller@example.com
+Subject: Booking Confirmation on IRCTC, Train: 12658
+Date: Mon, 17 Aug 2026 09:00:00 +0530
+Message-ID: <synthetic-irctc-1@irctc.co.in>
+Authentication-Results: mx.google.com; dkim=pass header.d=irctc.co.in; spf=pass smtp.mailfrom=irctc.co.in; dmarc=pass header.from=irctc.co.in
+Content-Type: text/plain; charset=utf-8
+
+SYNTHETIC FIXTURE - not a real IRCTC email.
+Your e-ticket is confirmed.
+PNR No. : 4521873390
+Train: 12658 Chennai Mail - Chennai Central to Bengaluru City
+Departure: 2026-08-27 22:40

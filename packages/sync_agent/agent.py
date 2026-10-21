@@ -11,8 +11,9 @@ Phase 4 capture SDK will forward rather than reinvent.
 from __future__ import annotations
 
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from datetime import datetime
+from typing import Protocol, runtime_checkable
 
 from packages.core.confirmation import ConfirmationRequest, ConfirmationStatus, ConfirmationStore
 from packages.core.decisions import ActionType, Decision, Reason
@@ -27,10 +28,12 @@ from packages.core.models import (
     Traveller,
 )
 from packages.nlp.baseline import BaselineExtractor
-from packages.nlp.email_extract import extract_email
+from packages.nlp.email_extract import EmailExtraction, extract_bookings
 from packages.nlp.extractor import Extractor
+from packages.nlp.html_text import html_to_text
 from packages.nlp.resolve import resolve_datetime
 from packages.nlp.schema import Frame, Intent, RESPONSE_INTENTS
+from packages.nlp.trust import SenderTrust, assess
 from packages.providers.calendar import CalendarProvider, RateLimitError
 from packages.providers.mail import RawEmail
 from packages.sync_agent.activation import (
@@ -71,6 +74,15 @@ class AgentResult:
     confirmation: ConfirmationRequest | None = None
     needs_clarification: bool = False
     trajectory: dict = field(default_factory=dict)
+    #: What the app shows beside the message: extraction stage, vendor, sender
+    #: trust, the booking as understood. Not part of the trajectory contract.
+    meta: dict = field(default_factory=dict)
+    #: Further bookings from the same email (a round trip's return leg). Each
+    #: has its own trajectory; the first booking's result carries the rest.
+    followups: list["AgentResult"] = field(default_factory=list)
+
+    def all(self) -> list["AgentResult"]:
+        return [self, *self.followups]
 
 
 class SyncAgent:
@@ -81,6 +93,8 @@ class SyncAgent:
         traveller: Traveller | None = None,
         confirmations: ConfirmationStore | None = None,
         activation: ActivationWindow | None = None,
+        zone: str | None = None,
+        email_fallback: EmailFallback | None = None,
     ):
         self.calendar = calendar
         self.extractor = extractor or BaselineExtractor()
@@ -92,6 +106,13 @@ class SyncAgent:
         #: the default: an agent that silently acquires quiet hours because a
         #: parameter appeared is a worse surprise than one that never sleeps.
         self.activation = activation
+        #: IANA zone that vendor timestamps are converted into. None keeps the
+        #: vendor's own wall-clock time, which is the pre-app behaviour.
+        self.zone = zone
+        #: Optional reader of last resort (an LLM) for booking mail the rules
+        #: could not parse. Only ever consulted for mail that would otherwise be
+        #: quarantined, so it can rescue a booking but never override a rule.
+        self.email_fallback = email_fallback
 
     # -- UC1 / UC3 / query: a spoken or typed command ---------------------
 
@@ -124,25 +145,72 @@ class SyncAgent:
     # -- UC2: an inbound email --------------------------------------------
 
     def handle_email(self, email: RawEmail, now: datetime) -> AgentResult:
-        tape = _Tape(source="email", text=email.subject, now=now, model="rule-based-email-v1")
         # NFR4 governs when the user can be *asked*, not when mail can be read:
         # an airline sends a cancellation at 03:00 whatever the window says, and
         # refusing to read it would lose the change. So email is never refused
         # here -- only the confirmation prompt is deferred (see _decide_and_act).
+        extractions = extract_bookings(
+            email.subject,
+            email.body,
+            now,
+            html=email.html,
+            attachments=email.attachments,
+            sender=email.sender,
+            zone=self.zone,
+        )
+        trust = assess(email.sender, email.headers)
+        results = [self._handle_extraction(email, extraction, trust, now) for extraction in extractions]
+        first = results[0]
+        first.followups = results[1:]
+        return first
+
+    def _handle_extraction(
+        self, email: RawEmail, extraction: EmailExtraction, trust: SenderTrust, now: datetime
+    ) -> AgentResult:
+        if (
+            extraction.is_booking_related
+            and not extraction.is_actionable
+            and self.email_fallback is not None
+        ):
+            rescued = self._try_fallback(email, now)
+            if rescued is not None:
+                extraction = rescued
+
+        # Prose rules keep their historical model name so existing trajectories
+        # and the new ones stay comparable; other stages are named for the stage.
+        prose = extraction.stage == "rules" or extraction.stage.startswith("vendor:")
+        model = "rule-based-email-v1" if prose else "email:%s" % extraction.stage
+        tape = _Tape(source="email", text=email.subject, now=now, model=model)
         self._release_queued(now, tape)
-        extraction = extract_email(email.subject, email.body, now)
         tape.tool("email.extract", {"message_id": email.message_id}, extraction.reason or "actionable")
+        tape.think("extracted by %s; sender %s (%s)" % (extraction.stage, trust.level, trust.reason))
+        meta = {
+            "message_id": email.message_id,
+            "subject": email.subject,
+            "sender": email.sender,
+            "stage": extraction.stage,
+            "vendor_id": extraction.vendor_id or trust.vendor_id,
+            "trust": trust.as_dict(),
+            "booking": _describe_extraction(extraction),
+        }
 
         if not extraction.is_booking_related:
             tape.think("not a booking email (%s)" % extraction.reason)
-            return tape.done(AgentResult("refused", "Ignored a non-booking email (%s)." % extraction.reason))
+            return _with_meta(
+                tape.done(AgentResult("refused", "Ignored a non-booking email (%s)." % extraction.reason)), meta
+            )
 
         if not extraction.is_actionable:
             # UC2 E1 -- quarantined and surfaced, never silently dropped.
             self.quarantine.append({"message_id": email.message_id, "subject": email.subject, "reason": extraction.reason})
             tape.think("quarantined: %s" % extraction.reason)
-            return tape.done(
-                AgentResult("failure", "Could not read this booking email; flagged it for review (%s)." % extraction.reason)
+            return _with_meta(
+                tape.done(
+                    AgentResult(
+                        "failure", "Could not read this booking email; flagged it for review (%s)." % extraction.reason
+                    )
+                ),
+                meta,
             )
 
         booking = _build_booking(
@@ -152,9 +220,24 @@ class SyncAgent:
             title=extraction.title,
             source=Source.EMAIL,
             booking_ref=extraction.booking_ref,
+            location=extraction.location,
+            end_time=extraction.end_time,
+            details=extraction.details,
         )
         tape.think("email says %s for %s at %s" % (extraction.status.value, extraction.title, extraction.date_time))
-        return self._decide_and_act(booking, now, tape)
+        return _with_meta(self._decide_and_act(booking, now, tape, warning=trust.warning()), meta)
+
+    def _try_fallback(self, email: RawEmail, now: datetime) -> EmailExtraction | None:
+        text = email.body
+        if email.html and len(text.strip()) < 80:
+            text = html_to_text(email.html)
+        try:
+            rescued = self.email_fallback.extract(email.subject, text, now)
+        except Exception:  # noqa: BLE001 -- a dead model must degrade to quarantine, not crash ingestion
+            return None
+        if rescued is None or not rescued.is_actionable:
+            return None
+        return rescued
 
     # -- UC3: resolving a confirmation ------------------------------------
 
@@ -360,7 +443,9 @@ class SyncAgent:
         phrase = slots.get("relative_ref")
         return find_by_phrase(events, phrase) if phrase else []
 
-    def _decide_and_act(self, booking: BookingEvent, now: datetime, tape: "_Tape") -> AgentResult:
+    def _decide_and_act(
+        self, booking: BookingEvent, now: datetime, tape: "_Tape", warning: str | None = None
+    ) -> AgentResult:
         events = self.calendar.list_events()
         tape.tool("calendar.list_events", {}, len(events))
         decision = decide(events, booking)
@@ -410,6 +495,11 @@ class SyncAgent:
             )
 
         request = self.confirmations.open(decision, now)
+        if warning:
+            # Sender trust is advisory: it changes what the user is told before
+            # they decide, never whether they are asked.
+            request.prompt = "%s %s" % (request.prompt, warning)
+            tape.think("sender warning attached to the prompt: %s" % warning)
 
         # UC3 E2. The user cannot be reached, so the prompt is not delivered --
         # and the change is neither applied nor dropped. Both of those would be
@@ -473,8 +563,14 @@ def _build_booking(
     booking_ref: str | None = None,
     destination: str | None = None,
     location: str | None = None,
+    end_time: datetime | None = None,
+    details: dict | None = None,
 ) -> BookingEvent:
     cls = _BOOKING_CLASSES[booking_type]
+    # Only the fields this subclass declares: a Flight's details handed to a
+    # HotelBooking (after a vendor profile overrode the type) must not raise.
+    allowed = {f.name for f in fields(cls)}
+    extra = {k: v for k, v in (details or {}).items() if k in allowed}
     return cls(
         booking_id=str(uuid.uuid4())[:8],
         booking_type=booking_type,
@@ -485,7 +581,36 @@ def _build_booking(
         booking_ref=booking_ref,
         destination=destination,
         location=location,
+        end_time=end_time,
+        **extra,
     )
+
+
+def _with_meta(result: AgentResult, meta: dict) -> AgentResult:
+    result.meta = {**meta, **result.meta}
+    return result
+
+
+def _describe_extraction(extraction: EmailExtraction) -> dict:
+    return {
+        "status": extraction.status.value if extraction.status else None,
+        "type": extraction.booking_type.value if extraction.booking_type else None,
+        "ref": extraction.booking_ref,
+        "title": extraction.title,
+        "start": extraction.date_time.isoformat() if extraction.date_time else None,
+        "end": extraction.end_time.isoformat() if extraction.end_time else None,
+        "location": extraction.location,
+        "reason": extraction.reason,
+    }
+
+
+@runtime_checkable
+class EmailFallback(Protocol):
+    """Reads a booking email the rules could not. Returns None when it cannot."""
+
+    name: str
+
+    def extract(self, subject: str, text: str, now: datetime) -> EmailExtraction | None: ...
 
 
 @dataclass

@@ -1,0 +1,48 @@
+From: IndiGo <noreply@customer.goindigo.in>
+To: traveller@example.com
+Subject: Your IndiGo itinerary - PNR QX7K2M
+Date: Mon, 17 Aug 2026 12:00:00 +0530
+Message-ID: <synthetic-indigo-rt-1@goindigo.in>
+Authentication-Results: mx.google.com; dkim=pass header.i=@goindigo.in header.s=s1; spf=pass smtp.mailfrom=bounce@customer.goindigo.in; dmarc=pass (p=REJECT) header.from=goindigo.in
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="b1"
+
+--b1
+Content-Type: text/plain; charset=utf-8
+
+SYNTHETIC FIXTURE - not a real IndiGo email.
+Your booking is confirmed. PNR: QX7K2M
+6E 211 Chennai (MAA) to Delhi (DEL) - 25 Aug 2026 06:00
+6E 212 Delhi (DEL) to Chennai (MAA) - 28 Aug 2026 19:30
+To unsubscribe from marketing emails, click here.
+
+--b1
+Content-Type: text/html; charset=utf-8
+
+<html><head>
+<script type="application/ld+json">
+[
+ {"@context": "http://schema.org", "@type": "FlightReservation",
+  "reservationNumber": "QX7K2M",
+  "reservationStatus": "http://schema.org/ReservationConfirmed",
+  "underName": {"@type": "Person", "name": "Traveller"},
+  "reservationFor": {"@type": "Flight", "flightNumber": "211",
+    "airline": {"@type": "Airline", "name": "IndiGo", "iataCode": "6E"},
+    "departureAirport": {"@type": "Airport", "name": "Chennai International", "iataCode": "MAA"},
+    "departureTime": "2026-08-25T06:00:00+05:30",
+    "arrivalAirport": {"@type": "Airport", "name": "Indira Gandhi International", "iataCode": "DEL"},
+    "arrivalTime": "2026-08-25T08:50:00+05:30"}},
+ {"@context": "http://schema.org", "@type": "FlightReservation",
+  "reservationNumber": "QX7K2M-R",
+  "reservationStatus": "http://schema.org/ReservationConfirmed",
+  "reservationFor": {"@type": "Flight", "flightNumber": "212",
+    "airline": {"@type": "Airline", "name": "IndiGo", "iataCode": "6E"},
+    "departureAirport": {"@type": "Airport", "name": "Indira Gandhi International", "iataCode": "DEL"},
+    "departureTime": "2026-08-28T19:30:00+05:30",
+    "arrivalAirport": {"@type": "Airport", "name": "Chennai International", "iataCode": "MAA"},
+    "arrivalTime": "2026-08-28T22:15:00+05:30"}}
+]
+</script></head>
+<body><p>SYNTHETIC FIXTURE. Your booking is confirmed.</p><p><a href="#">Unsubscribe</a></p></body></html>
+
+--b1--
