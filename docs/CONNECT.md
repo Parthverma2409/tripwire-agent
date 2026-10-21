@@ -70,10 +70,25 @@ Google renamed this area **Google Auth Platform**. Older guides call it
 
 > **About the 7-day limit.** While the app's publishing status is **Testing**, Google
 > expires the sign-in after **7 days** and you would have to click *Connect Google* again
-> every week. To avoid that, go to **Audience** → **Publish app** → confirm. You don't need
-> Google's verification for personal use. When you connect, Google shows a
-> "Google hasn't verified this app" screen. Click **Advanced** → **Go to Tripwire (unsafe)**:
-> it's your own app talking to your own account.
+> every week. To avoid that, publish the app. Google greys out **Publish app** until the
+> **Branding** page has four things, so fill those in first:
+>
+> 1. Left menu → **Branding**.
+> 2. **App name:** `Tripwire`. **User support email:** your Gmail.
+> 3. **Application home page:** `https://github.com/Parthverma2409/tripwire-agent`
+> 4. **Application privacy policy link:**
+>    `https://github.com/Parthverma2409/tripwire-agent/blob/main/PRIVACY.md`
+>    (the repo's privacy policy, which describes exactly what Tripwire does with your data)
+> 5. Leave **Terms of service** and the logo empty. A logo would trigger brand review.
+> 6. If Google asks for **Authorised domains**, add `github.com`.
+> 7. **Developer contact information:** your Gmail → **Save**.
+> 8. **Audience** → **Publish app** → **Confirm**. If Google offers to "prepare for
+>    verification", skip it. Personal use (under 100 users) doesn't need it.
+>
+> When you connect, Google shows a "Google hasn't verified this app" screen. Click
+> **Advanced** → **Go to Tripwire (unsafe)**: it's your own app talking to your own account.
+> If Google won't accept the links, you can stay in Testing and click *Connect Google*
+> once a week instead. Everything else works the same.
 
 ### 1.4 Create the OAuth client
 
