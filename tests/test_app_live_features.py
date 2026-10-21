@@ -189,3 +189,33 @@ def test_swiggy_order_updates_are_notified(clock) -> None:
 def test_without_swiggy_a_table_request_says_how_to_connect(clock) -> None:
     result = _client(clock).post("/api/command", json={"text": "book a table at Toit tomorrow at 8pm on swiggy"}, headers=H).json()
     assert result["status"] == "refused" and "Connect Swiggy" in result["message"]
+
+
+# -- the demo-mail leak (first live run) --------------------------------------------
+
+
+def test_mail_fetched_before_a_rebuild_is_not_handled_by_the_new_agent(clock) -> None:
+    """Demo sample mail reached a real Google Calendar: a scan fetched from the
+    demo inbox, the app switched to live mid-scan, and the new agent got the
+    mail. A scan now stops when the build it started under is gone."""
+    runtime = _client(clock).app.state.runtime
+    inbox = runtime.mail
+    fetch = inbox.fetch_new
+
+    def fetch_then_switch():
+        emails = fetch()
+        runtime.build()  # the user flips Demo -> Live while the scan is running
+        return emails
+
+    inbox.fetch_new = fetch_then_switch
+    titles_before = [e["title"] for e in runtime.events()]
+    assert runtime.scan()["handled"] == 0
+    assert [e["title"] for e in runtime.events()] == titles_before
+    assert not list(inbox._seen)  # left unseen: nothing was done with it
+
+
+def test_sample_mail_is_refused_outside_demo_mode(clock) -> None:
+    runtime = _client(clock).app.state.runtime
+    email = runtime.mail.fetch_new()[0]
+    runtime.settings.mode = "live"
+    assert runtime.ingest_email(email, channel="demo") is None

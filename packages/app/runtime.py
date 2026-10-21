@@ -154,6 +154,10 @@ class Runtime:
         #: request_id -> what the app shows beside a pending question.
         self._request_meta: dict[str, dict] = {}
         self._announced_expiry: set[str] = set()
+        #: Bumped by every build. An inbox scan remembers the generation it
+        #: fetched under and stops if it changes: mail fetched from the demo
+        #: inbox must never be handed to the agent that writes to Google.
+        self.generation = 0
         self.build()
 
     # -- clock -------------------------------------------------------------
@@ -181,6 +185,7 @@ class Runtime:
             self.status = ConnectionStatus()
             self._request_meta.clear()
             self._announced_expiry.clear()
+            self.generation += 1
             if self.settings.mode == "demo":
                 self._build_demo()
             else:
@@ -417,8 +422,14 @@ class Runtime:
         self._announce(payload, channel)
         return payload
 
-    def ingest_email(self, email: RawEmail, channel: str) -> list[dict]:
+    def ingest_email(self, email: RawEmail, channel: str, generation: int | None = None) -> list[dict] | None:
+        """Handle one email. None, and nothing done, when it was fetched under an
+        earlier build (``generation``) -- the inbox it came from is gone."""
         with self.lock:
+            if generation is not None and generation != self.generation:
+                return None
+            if channel == "demo" and self.settings.mode != "demo":
+                return None  # belt and braces: sample mail never meets a real calendar
             agent = self._require_agent()
             result = self._guard(lambda: agent.handle_email(email, self.now()))
             payloads = []
@@ -447,19 +458,22 @@ class Runtime:
 
     def scan(self) -> dict:
         """One pass over the inbox. Seen only after handling, like EmailIngestionModule."""
-        if self.mail is None:
-            raise NotReady("No inbox connected.")
-        self._require_agent()
+        with self.lock:
+            mail, channel, generation = self.mail, self.mail_channel, self.generation
+            if mail is None:
+                raise NotReady("No inbox connected.")
+            self._require_agent()
         try:
-            emails = self.mail.fetch_new()
+            emails = mail.fetch_new()
         except Exception as exc:  # noqa: BLE001 -- shown to the user, retried next poll
             self.status.mail = {**self.status.mail, "ok": False, "detail": "Last scan failed: %s" % exc}
             self.bus.publish("status", self.status_dict())
             raise
         handled = 0
         for email in emails:
-            self.ingest_email(email, channel=self.mail_channel)
-            self.mail.mark_seen(email.message_id)
+            if self.ingest_email(email, channel=channel, generation=generation) is None:
+                break  # rebuilt mid-scan (mode switch, new account): the next scan starts clean
+            mail.mark_seen(email.message_id)
             handled += 1
         stamp = self.now().isoformat(timespec="seconds")
         self.state.set_value("last_scan", {"at": stamp, "handled": handled})
