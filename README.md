@@ -1,4 +1,4 @@
-# AI Booking-Lifecycle Sync Assistant
+# Tripwire — AI Booking-Lifecycle Sync Assistant
 
 A booking's lifecycle — not just its creation — should always be reflected in your
 calendar, without you having to remember to update it.
@@ -7,8 +7,25 @@ calendar, without you having to remember to update it.
 true state of travel bookings across creation, rescheduling and cancellation.
 **Part B** is a self-hosted platform that captures, scores and compares that agent's
 behaviour, and the two research studies built on it.
+**Tripwire** is the app that puts both in front of a person: a local web UI that reads
+booking mail from Gmail or IMAP, keeps Google Calendar in step, and asks before it
+deletes or moves anything (in the browser, or on Telegram).
 
-Everything runs locally against in-memory fakes, so the whole suite is deterministic and
+### Run the app
+
+**Windows:** double-click `run_app.bat`. **macOS / Linux:** `./run_app.sh`.
+It opens `http://127.0.0.1:8765` in **demo mode** (sample emails, practice calendar).
+To connect your real accounts, follow **[docs/CONNECT.md](docs/CONNECT.md)**.
+
+```bash
+python -m pip install -e ".[app]" && (cd web && npm install && npm run build)
+python -m packages.app                          # the app, on 127.0.0.1:8765
+python -m packages.nlp check-email my.eml       # what the extractor reads from a real email
+```
+
+### Run the research code
+
+Everything below runs locally against in-memory fakes, so the whole suite is deterministic and
 free. No API keys, no models and no network are needed to run any command below.
 
 ```bash
@@ -17,7 +34,7 @@ python -m venv .venv
 ./.venv/Scripts/Activate.ps1            # PowerShell;  source .venv/bin/activate on POSIX
 python -m pip install -e ".[dev]"
 
-python -m pytest tests/ -q              # 797 tests
+python -m pytest tests/ -q              # unit + API tests (browser tests skip unless set up)
 python -m packages.demo                 # narrated end-to-end walkthrough
 ```
 
@@ -36,6 +53,7 @@ The demo is the fastest way to understand what this does. Start there.
 | 4 | Capture SDK (FR7), ingest pipeline, evaluator registry (FR8) | done |
 | 5 | Google adapters, OAuth + token store, voice shell, activation window | done (unverified vs live Google) |
 | 6 | Dashboard (FR9), model comparison (FR10), RQ1/RQ2 | done (awaiting human labels) |
+| 7 | Tripwire app: FastAPI service, Next.js UI, staged email extraction (schema.org, .ics, vendor profiles), sender trust, IMAP, Telegram approvals, Ollama fallback, local Whisper | done (unverified vs live services) |
 
 **797 tests, 66 scenarios, 0 FR5 violations.** What is *not* done is measurement, not
 code: see [Honest limits](#honest-limits).
@@ -62,6 +80,10 @@ python -m packages.analysis.rq2                 # judge reliability + bias check
 
 # Dashboard (FR9)
 python dashboard/build_index.py                 # then open dashboard/index.html
+
+# The app
+python -m packages.app                          # web UI + API on 127.0.0.1:8765
+python -m packages.nlp check-email path.eml     # per-stage extraction report, touches nothing
 ```
 
 `packages.bench` exits **2** on any unconfirmed destructive action. Wire that into CI:
@@ -120,6 +142,9 @@ Three habits, because a green suite is not by itself evidence:
 | NFR5 ingest throughput | `packages/eval_ingest/pipeline.py` | measured: ~3,400/s, far past 1,000/day |
 | NFR6 independent deployability | protocols in `packages/providers/` | fakes and real adapters share one interface |
 | RQ1 / RQ2 | `packages/analysis/rq1.py`, `rq2.py` | `tests/test_rq_analysis.py`, `tests/test_statistics.py` |
+| FR2+ staged extraction: schema.org, .ics, vendor, rules, LLM | `packages/nlp/structured.py`, `ics.py`, `vendors.py`, `llm_email.py` | `tests/test_email_pipeline.py` |
+| Sender authentication shown at the FR5 prompt | `packages/nlp/trust.py` | `tests/test_email_pipeline.py` (forged cancellation) |
+| App API, local-only guards, OAuth state | `packages/app/` | `tests/test_app_api.py`, `tests/e2e/test_ui.py` |
 
 ---
 
@@ -135,7 +160,11 @@ packages/eval_ingest/   FR8 normalise, validate, quarantine, evaluator registry
 packages/bench/         scenario replay, latency, FR10 comparison + gate
 packages/analysis/      pure-Python statistics, RQ1 and RQ2
 packages/demo/          narrated walkthrough
-dashboard/              FR9 static offline dashboard (no build step)
+packages/app/           Tripwire: FastAPI service, runtime, scheduler, OAuth flow, SQLite state
+packages/notify/        Telegram approvals (signed buttons, long polling)
+web/                    Next.js UI, exported static and served by packages/app
+dashboard/              FR9 static offline dashboard (no build step), also at /research/
+data/vendors/           sender profiles for the email extractor (MakeMyTrip, IndiGo, IRCTC, Uber...)
 data/scenarios/         66 reconciliation scenarios -- the test suite and FR10 benchmark
 schemas/                frozen trajectory contract
 ```
@@ -162,13 +191,18 @@ that has to happen before the labelling session rather than after.
 
 Worth knowing before quoting any number from this repository.
 
-- **The Google adapters have never run against the real API.** No credentials existed on
-  the build machine. Their tests prove self-consistency and correct handling of Google's
+- **The Google adapters, Gmail attachment fetch, IMAP, Telegram, Ollama and Whisper have
+  never run against the real services.** No credentials or models existed on the build
+  machine; `docs/CONNECT.md` is how they get wired and the Connections page tests each one.
+  The Google adapters' tests prove self-consistency and correct handling of Google's
   documented error dialect; they cannot prove the payload shapes are right. `DATASETS.md`
   lists exactly what stays unverified until you run it.
-- **The token encryption is a hand-rolled stdlib construction, not vetted crypto.** It
-  detects tampering and fails closed. Production should use `cryptography` or an OS
-  keystore.
+- **Vendor profiles (`data/vendors/vendors.yaml`) were written from public knowledge, not
+  from real mail.** The email fixtures under `data/emails/fixtures/vendors/` are synthetic.
+  Run `check-email` on your own booking mail before trusting a profile.
+- **Token encryption.** The app writes the v2 format (AES-256-GCM via `cryptography`, key
+  in the OS keyring). The v1 stdlib construction remains the store's default for the
+  research code and is read for migration; it is not vetted crypto.
 - **NLU scores come from template-generated data and are an optimistic ceiling.** Real
   speech is messier than any template set.
 - **RQ1 and RQ2 arithmetic is real; the labels are not.** No human labels have been

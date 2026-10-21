@@ -1,7 +1,21 @@
-# Setup — see the demo, then run the agent from the terminal
+# Setup
 
-Everything here runs locally against in-memory fakes. No API keys, no model, no
-network. A UI comes later; for now the agent is driven from the terminal.
+Two ways in:
+
+- **Use the app (Tripwire).** Double-click **`run_app.bat`** (Windows) or run
+  **`./run_app.sh`**. It installs everything on first run, builds the web UI and opens
+  `http://127.0.0.1:8765` in demo mode. Needs Python 3.11+ and Node.js 20+. To connect
+  Google Calendar, Gmail, Telegram and the rest, follow **[docs/CONNECT.md](docs/CONNECT.md)**.
+- **See the research demo.** The narrated terminal walkthrough below. Runs locally
+  against in-memory fakes: no API keys, no model, no network.
+
+### Browser tests (optional)
+
+```bash
+.venv\Scripts\python -m pip install -e ".[e2e]"
+.venv\Scripts\python -m playwright install chromium-headless-shell
+.venv\Scripts\python -m pytest tests/e2e        # needs the UI built: cd web && npm run build
+```
 
 ---
 

@@ -2,8 +2,9 @@
 
 **AI Booking-Lifecycle Sync Assistant + Behaviour-Evaluation Platform**
 
-To see it run before reading anything: double-click `run_demo.bat` (Windows) or run
-`./run_demo.sh` (macOS/Linux). Details in `SETUP.md`.
+To use it: double-click `run_app.bat` (Windows) or run `./run_app.sh`. The app
+(**Tripwire**) opens in demo mode; `docs/CONNECT.md` connects your real accounts.
+For the narrated research walkthrough: `run_demo.bat` / `./run_demo.sh`. Details in `SETUP.md`.
 
 ---
 
@@ -101,18 +102,20 @@ live and fails.
 
 ## What is *not* done (stated up front)
 
-- The Google Calendar / Gmail adapters have never been run against the real API — no
-  credentials existed on the build machine. Everything runs against in-memory fakes that
-  share the same interface.
-- Token encryption is a hand-rolled stdlib construction; production should use a vetted
-  library.
+- The Google Calendar / Gmail adapters, IMAP, Telegram, Ollama and Whisper have never
+  been run against the real services: no credentials or models existed on the build
+  machine. Everything is tested against fakes that share the same interface, and
+  `docs/CONNECT.md` plus the app's Connections page are how they get wired and checked.
+- The vendor profiles for MakeMyTrip, IndiGo, IRCTC, Uber, Swiggy and others were written
+  from public knowledge, not real mail; the vendor fixtures are synthetic.
+- The app stores the Google token with AES-256-GCM (key in the OS keyring). The older
+  hand-rolled stdlib format is still read, for migration.
 - NLU scores come from template-generated data and are an optimistic ceiling.
 - No human labels have been collected yet, so RQ1/RQ2 arithmetic is real but the inputs
   are placeholders. An earlier version reported a confident self-preference figure that
   would have been fabricated; it was removed.
-- There is no interactive UI yet. The agent is driven by the demo and by tests. A
-  terminal chat loop or web UI would wrap `SyncAgent.handle_command()` and
-  `SyncAgent.handle_email()`.
+- Pending confirmations live in memory, by design: a restart drops them (nothing is
+  applied) rather than persisting a capability to delete events.
 
 ## Repository map
 
@@ -130,6 +133,10 @@ packages/eval_ingest/        FR8 ingest, validate, quarantine, evaluators
 packages/bench/              scenario replay, latency, FR10 model comparison
 packages/analysis/           RQ1 / RQ2 statistics
 packages/demo/               the narrated walkthrough
+packages/app/                Tripwire: local web service, runtime, OAuth, scheduler
+packages/notify/             Telegram approvals
+web/                         Next.js UI
+docs/CONNECT.md              step-by-step guide to wiring real accounts
 dashboard/                   FR9 static dashboard
 data/scenarios/              the 66 scenarios (source, not generated data)
 tests/                       797 tests

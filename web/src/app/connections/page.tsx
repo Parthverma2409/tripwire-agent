@@ -251,8 +251,9 @@ export default function ConnectionsPage() {
           }
           steps={[
             { text: <>Using Gmail? Nothing to do here: connecting Google above covers it.</> },
-            { text: <>Outlook, Yahoo or other: turn on two-step sign-in and create an <b>app password</b> for mail.</> },
-            { text: <>Add <Code>IMAP_HOST</Code>, <Code>IMAP_USER</Code> and <Code>IMAP_PASSWORD</Code> to <Code>.env</Code> (e.g. <Code>outlook.office365.com</Code>), then restart.</> },
+            { text: <>Yahoo, Zoho, iCloud or Fastmail: turn on two-step sign-in and create an <b>app password</b> for mail.</> },
+            { text: <>Add <Code>IMAP_HOST</Code>, <Code>IMAP_USER</Code> and <Code>IMAP_PASSWORD</Code> to <Code>.env</Code> (e.g. <Code>imap.mail.yahoo.com</Code>), then restart.</> },
+            { text: <>Personal Outlook.com no longer allows app passwords over IMAP. Set Outlook to forward booking emails to a Gmail account instead.</> },
             { text: <>Optional: in Gmail, add a filter that labels booking emails and set <Code>BSYNC_GMAIL_QUERY=label:bookings newer_than:30d</Code>.</> },
           ]}
         />
