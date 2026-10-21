@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 
 from packages.core.models import Alarm, BookingType, CalendarEvent
+from packages.nlp.zones import localise
 
 from .oauth import GoogleApiClient, GoogleApiError
 
@@ -157,7 +158,11 @@ class GoogleCalendarProvider:
     def _from_google_time(self, node: dict) -> datetime | None:
         raw = node.get("dateTime")
         if raw:
-            return _to_naive(datetime.fromisoformat(raw.replace("Z", "+00:00")))
+            # Read back in the same zone writes are sent in. Flattening to UTC
+            # here while writing in, say, Asia/Kolkata would make every event
+            # read back 5h30 early -- and the reconciler would then see a
+            # "reschedule" on every scan and ask the user about it.
+            return localise(datetime.fromisoformat(raw.replace("Z", "+00:00")), self.time_zone)
         raw = node.get("date")
         if raw:
             # An all-day booking. Midnight is the only defensible reading, and it

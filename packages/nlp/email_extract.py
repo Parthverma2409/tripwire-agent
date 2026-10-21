@@ -162,7 +162,9 @@ def extract_bookings(
         return calendar
 
     text = body
-    if html and len(body.strip()) < _STUB_BODY_CHARS:
+    if html and (len(body.strip()) < _STUB_BODY_CHARS or body.lstrip().startswith("<")):
+        # A "view in browser" stub, or a provider that handed us the HTML as the
+        # body because there was no text part: read the rendered HTML instead.
         text = html_to_text(html)
     return [_from_prose(subject, text, now, vendor)]
 

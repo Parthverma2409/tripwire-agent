@@ -182,24 +182,38 @@ class OAuthCredentials:
         )
 
 
-def authorization_url(client_id: str, redirect_uri: str, scopes: tuple[str, ...] = SCOPES) -> str:
+def authorization_url(
+    client_id: str,
+    redirect_uri: str,
+    scopes: tuple[str, ...] = SCOPES,
+    state: str | None = None,
+    login_hint: str | None = None,
+) -> str:
     """Step 1 of the installed-app flow: the URL the traveller opens once.
 
     ``access_type=offline`` is what makes Google issue a refresh token, and
     ``prompt=consent`` forces it to be re-issued on re-authorisation; without
     both, a re-auth silently yields credentials that die in an hour.
+
+    ``state`` is the CSRF defence for a redirect flow (RFC 6749 10.12): the app
+    makes a random one, keeps it, and refuses a callback that does not echo it.
+    Without it, any page could send the browser to the callback with the
+    attacker's own code and connect the attacker's calendar to this agent.
     """
-    query = urllib.parse.urlencode(
-        {
-            "client_id": client_id,
-            "redirect_uri": redirect_uri,
-            "response_type": "code",
-            "scope": " ".join(scopes),
-            "access_type": "offline",
-            "prompt": "consent",
-        }
-    )
-    return "%s?%s" % (AUTH_URI, query)
+    params = {
+        "client_id": client_id,
+        "redirect_uri": redirect_uri,
+        "response_type": "code",
+        "scope": " ".join(scopes),
+        "access_type": "offline",
+        "prompt": "consent",
+        "include_granted_scopes": "true",
+    }
+    if state:
+        params["state"] = state
+    if login_hint:
+        params["login_hint"] = login_hint
+    return "%s?%s" % (AUTH_URI, urllib.parse.urlencode(params))
 
 
 class OAuthSession:

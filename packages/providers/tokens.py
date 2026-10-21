@@ -44,6 +44,17 @@ WHAT IT DOES NOT GUARANTEE
     guessing, it does not remove it.
   * Decryption cannot distinguish "wrong passphrase" from "file tampered with",
     because both are just a failed MAC. The error says so rather than guessing.
+
+VERSION 2 (``bsync-token-v2``)
+-----------------------------
+The app writes v2: the same PBKDF2 key derivation, but the cipher is AES-256-GCM
+from the ``cryptography`` package -- a vetted AEAD instead of the construction
+above. The version string and salt are bound in as associated data, so a
+downgrade or salt swap fails authentication like any other tampering. v1 files
+are still read, so an existing token migrates on its next save. The format is
+chosen explicitly by the caller (``fmt=``) rather than by whether
+``cryptography`` happens to be importable: a store that silently wrote a
+different format on a different machine would be a confusing way to lose a token.
 """
 
 from __future__ import annotations
@@ -60,6 +71,8 @@ from pathlib import Path
 #: Bumped if the construction ever changes, so an old file fails loudly instead
 #: of being decrypted with the wrong rules.
 FORMAT_VERSION = "bsync-token-v1"
+FORMAT_V2 = "bsync-token-v2"
+GCM_NONCE_BYTES = 12
 
 PBKDF2_ITERATIONS = 600_000
 SALT_BYTES = 16
@@ -154,6 +167,58 @@ def decrypt(envelope: dict, passphrase: str) -> bytes:
     return _xor(ciphertext, _keystream(enc_key, nonce, len(ciphertext)))
 
 
+def encrypt_v2(plaintext: bytes, passphrase: str) -> dict:
+    """AES-256-GCM envelope. Requires the ``cryptography`` package."""
+    aesgcm = _aesgcm()
+    salt = os.urandom(SALT_BYTES)
+    nonce = os.urandom(GCM_NONCE_BYTES)
+    key = _derive_v2(passphrase, salt)
+    sealed = aesgcm(key).encrypt(nonce, plaintext, FORMAT_V2.encode("ascii") + salt)
+    return {
+        "version": FORMAT_V2,
+        "kdf": {"name": "pbkdf2-hmac-sha256", "iterations": PBKDF2_ITERATIONS},
+        "cipher": "aes-256-gcm",
+        "salt": base64.b64encode(salt).decode("ascii"),
+        "nonce": base64.b64encode(nonce).decode("ascii"),
+        "ciphertext": base64.b64encode(sealed).decode("ascii"),
+    }
+
+
+def decrypt_v2(envelope: dict, passphrase: str) -> bytes:
+    iterations = (envelope.get("kdf") or {}).get("iterations")
+    if iterations != PBKDF2_ITERATIONS:
+        raise TokenStoreError("token file declares %r KDF iterations; refusing to guess" % iterations)
+    try:
+        salt = base64.b64decode(envelope["salt"], validate=True)
+        nonce = base64.b64decode(envelope["nonce"], validate=True)
+        sealed = base64.b64decode(envelope["ciphertext"], validate=True)
+    except (KeyError, ValueError, TypeError) as exc:
+        raise TokenStoreError("token file is malformed: %s" % exc) from exc
+    aesgcm = _aesgcm()
+    from cryptography.exceptions import InvalidTag
+
+    try:
+        return aesgcm(_derive_v2(passphrase, salt)).decrypt(nonce, sealed, FORMAT_V2.encode("ascii") + salt)
+    except (InvalidTag, ValueError):
+        raise TokenStoreError(
+            "token file failed authentication: wrong passphrase, or the file has been modified"
+        ) from None
+
+
+def _derive_v2(passphrase: str, salt: bytes) -> bytes:
+    return hashlib.pbkdf2_hmac("sha256", passphrase.encode("utf-8"), salt, PBKDF2_ITERATIONS, dklen=KEY_BYTES)
+
+
+def _aesgcm():
+    try:
+        from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    except ImportError as exc:
+        raise TokenStoreError(
+            "the v2 token format needs the 'cryptography' package: pip install -e \".[app]\""
+        ) from exc
+    return AESGCM
+
+
 @dataclass
 class EncryptedTokenStore:
     """A single credential document, encrypted at rest under a passphrase.
@@ -166,12 +231,28 @@ class EncryptedTokenStore:
 
     path: Path
     passphrase: str = field(repr=False)
+    #: Format written by ``save``. Either format is read by ``load``.
+    fmt: str = FORMAT_VERSION
 
     def exists(self) -> bool:
         return Path(self.path).exists()
 
+    def file_format(self) -> str | None:
+        """The version string on disk, so a caller can migrate v1 to v2."""
+        try:
+            return json.loads(Path(self.path).read_text(encoding="utf-8")).get("version")
+        except (OSError, ValueError, AttributeError):
+            return None
+
+    def delete(self) -> None:
+        try:
+            Path(self.path).unlink()
+        except FileNotFoundError:
+            pass
+
     def save(self, payload: dict) -> None:
-        envelope = encrypt(json.dumps(payload, sort_keys=True).encode("utf-8"), self.passphrase)
+        plaintext = json.dumps(payload, sort_keys=True).encode("utf-8")
+        envelope = encrypt_v2(plaintext, self.passphrase) if self.fmt == FORMAT_V2 else encrypt(plaintext, self.passphrase)
         path = Path(self.path)
         path.parent.mkdir(parents=True, exist_ok=True)
         # Write-then-replace: a crash mid-write must not leave a half-file where
@@ -189,7 +270,11 @@ class EncryptedTokenStore:
             envelope = json.loads(path.read_text(encoding="utf-8"))
         except json.JSONDecodeError as exc:
             raise TokenStoreError("token file at %s is not valid JSON: %s" % (path, exc)) from exc
-        payload = json.loads(decrypt(envelope, self.passphrase).decode("utf-8"))
+        if envelope.get("version") == FORMAT_V2:
+            plaintext = decrypt_v2(envelope, self.passphrase)
+        else:
+            plaintext = decrypt(envelope, self.passphrase)
+        payload = json.loads(plaintext.decode("utf-8"))
         if not isinstance(payload, dict):
             raise TokenStoreError("token file did not contain a credential object")
         return payload

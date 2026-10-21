@@ -25,8 +25,8 @@ import base64
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from .mail import RawEmail
-from .oauth import GoogleApiClient
+from .mail import Attachment, RawEmail
+from .oauth import GoogleApiClient, GoogleApiError
 
 API_ROOT = "https://gmail.googleapis.com/gmail/v1/users/me"
 
@@ -38,6 +38,19 @@ PAGE_SIZE = 100
 #: cannot mishandle.
 DEFAULT_QUERY = "in:inbox newer_than:30d"
 
+#: A narrower default for the app: booking-shaped subjects only, promotions tab
+#: excluded. Gmail evaluates this server side, so the rest of the inbox is never
+#: downloaded. Users who label their booking mail can use "label:bookings".
+BOOKING_QUERY = (
+    "newer_than:30d -category:promotions "
+    "subject:(booking OR booked OR confirmed OR confirmation OR cancelled OR "
+    "canceled OR reschedule OR rescheduled OR itinerary OR ticket OR PNR OR "
+    "reservation OR appointment OR ride OR table)"
+)
+
+#: Same cap as the .eml parser: an itinerary .ics is a few KB.
+MAX_ATTACHMENT_BYTES = 256 * 1024
+
 
 @dataclass
 class GmailProvider:
@@ -47,6 +60,8 @@ class GmailProvider:
     query: str = DEFAULT_QUERY
     max_messages: int = 50
     #: Locally tracked read state. See mark_seen for why this is not server-side.
+    #: Any container with ``in`` and ``add`` works; the app passes a SQLite-backed
+    #: one so the seen-set survives a restart.
     _seen: set[str] = field(default_factory=set)
 
     # -- MailProvider ------------------------------------------------------
@@ -93,6 +108,7 @@ class GmailProvider:
         )
         payload = message.get("payload") or {}
         headers = {h.get("name", ""): h.get("value", "") for h in payload.get("headers") or []}
+        html = _find_part(payload, "text/html")
         return RawEmail(
             message_id=message.get("id", message_id),
             sender=headers.get("From", ""),
@@ -100,7 +116,38 @@ class GmailProvider:
             body=_body_text(payload) or message.get("snippet", ""),
             received_at=_received_at(message),
             headers=headers,
+            html=_decode(html) if html is not None else "",
+            attachments=tuple(self._calendar_attachments(message.get("id", message_id), payload)),
         )
+
+    def _calendar_attachments(self, message_id: str, payload: dict) -> list[Attachment]:
+        """``.ics`` parts only. Small ones arrive inline; larger ones by id.
+
+        Each fetch is one more API call, which is why nothing else -- PDFs,
+        images -- is ever downloaded.
+        """
+        found = []
+        for part in _walk(payload):
+            filename = part.get("filename") or ""
+            mime = part.get("mimeType") or ""
+            if mime not in ("text/calendar", "application/ics") and not filename.lower().endswith(".ics"):
+                continue
+            body = part.get("body") or {}
+            if (body.get("size") or 0) > MAX_ATTACHMENT_BYTES:
+                continue
+            data = body.get("data")
+            if not data and body.get("attachmentId"):
+                try:
+                    fetched = self.client.request(
+                        "GET", "%s/messages/%s/attachments/%s" % (API_ROOT, message_id, body["attachmentId"])
+                    )
+                except GoogleApiError:
+                    continue  # the email body still gets read; one lost invite is not fatal
+                data = fetched.get("data")
+            raw = _b64(data)
+            if raw:
+                found.append(Attachment(filename=filename or "invite.ics", mime_type="text/calendar", data=raw))
+        return found
 
 
 def _received_at(message: dict) -> datetime:
@@ -132,6 +179,21 @@ def _body_text(payload: dict) -> str:
     if html is not None:
         return _decode(html)
     return _decode(payload)
+
+
+def _walk(node: dict):
+    yield node
+    for part in node.get("parts") or []:
+        yield from _walk(part)
+
+
+def _b64(data: str | None) -> bytes:
+    if not data:
+        return b""
+    try:
+        return base64.urlsafe_b64decode(data + "=" * (-len(data) % 4))
+    except (ValueError, TypeError):
+        return b""
 
 
 def _find_part(node: dict, mime_type: str) -> dict | None:

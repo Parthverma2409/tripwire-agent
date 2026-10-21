@@ -10,7 +10,18 @@ requires-python = ">=3.11"
 dependencies = ["pyyaml>=6.0", "tzdata>=2024.1"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0", "ruff>=0.6", "jsonschema>=4.20"]
+dev = ["pytest>=8.0", "ruff>=0.6", "jsonschema>=4.20", "httpx>=0.27"]
+# The local web app (packages/app). Kept out of the core dependencies so the
+# agent, the benchmark and the research code still install with PyYAML alone.
+app = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "python-multipart>=0.0.9",
+    "cryptography>=42",
+    "keyring>=25",
+]
+# Browser end-to-end tests of the app UI.
+e2e = ["pytest-playwright>=0.5"]
 
 # Explicit, because this repo is a flat layout: `data/` and `schemas/` sit next
 # to `packages/`, and setuptools refuses to guess between them. Without this the
