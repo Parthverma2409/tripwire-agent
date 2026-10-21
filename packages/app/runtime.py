@@ -116,6 +116,12 @@ class Runtime:
         telegram_transport=None,
     ):
         self.settings = settings
+        #: The persistent store: settings, and everything recorded in live mode.
+        self.store = state
+        #: Where interactions are recorded right now. In live mode this is
+        #: ``store``; in demo mode a fresh in-memory database per build, so the
+        #: demo's mail log, seen-set and activity always match its in-memory
+        #: calendar -- and demo noise never lands in the real history.
         self.state = state
         self.bus = EventBus()
         self.pipeline = IngestPipeline(store=state)
@@ -129,6 +135,7 @@ class Runtime:
         self.mail_channel: str = "none"
         self.agent: SyncAgent | None = None
         self.bot: TelegramBot | None = None
+        self.transcriber = None
         self.status = ConnectionStatus()
         #: request_id -> what the app shows beside a pending question.
         self._request_meta: dict[str, dict] = {}
@@ -155,6 +162,8 @@ class Runtime:
         """
         with self.lock:
             self._apply_saved_settings()
+            self.state = self.store if self.settings.mode == "live" else AppState(":memory:")
+            self.pipeline = IngestPipeline(store=self.state)
             self.status = ConnectionStatus()
             self._request_meta.clear()
             self._announced_expiry.clear()
@@ -164,7 +173,7 @@ class Runtime:
                 self._build_live()
             self.bot = self._build_telegram()
             extractor, fallback = self._build_extractors()
-            self.status.voice = {"ok": True, "detail": "Browser speech recognition (Chrome / Edge)"}
+            self.transcriber = self._build_transcriber()
             if self.calendar is None:
                 self.agent = None
             else:
@@ -175,11 +184,12 @@ class Runtime:
                     activation=ActivationWindow.parse(window) if window else None,
                     zone=self.settings.zone,
                     email_fallback=fallback,
+                    alarm_minutes=int(self.settings.alarm_minutes),
                 )
         self.bus.publish("rebuilt", self.status_dict())
 
     def _apply_saved_settings(self) -> None:
-        overrides = self.state.get_value("settings", {}) or {}
+        overrides = self.store.get_value("settings", {}) or {}
         for key in ("zone", "active_window", "poll_minutes", "alarm_minutes", "mode"):
             if key in overrides and overrides[key] not in (None, ""):
                 setattr(self.settings, key, overrides[key])
@@ -190,10 +200,6 @@ class Runtime:
         now = self.now()
         self.calendar = demo_calendar(now)
         inbox = demo_inbox(now)
-        seen = self.state.seen_set()
-        # The demo inbox is rebuilt on every start; mail seen in an earlier run
-        # stays seen, so a restart does not re-ask the demo's questions.
-        inbox._seen = seen  # FakeInbox keeps a plain set; any container works
         self.mail = inbox
         self.mail_channel = "demo"
         self.status.calendar = {"ok": True, "provider": "demo", "detail": "In-memory demo calendar"}
@@ -281,6 +287,62 @@ class Runtime:
             FallbackExtractor(OllamaExtractor(model=self.settings.ollama_model, host=host), baseline),
             OllamaEmailExtractor(model=self.settings.ollama_model, host=host),
         )
+
+    def _build_transcriber(self):
+        model = self.settings.whisper_model.strip()
+        if model:
+            try:
+                import faster_whisper  # noqa: F401 -- availability check only
+            except ImportError:
+                self.status.voice = {
+                    "ok": True, "provider": "browser",
+                    "detail": "WHISPER_MODEL is set but faster-whisper is not installed (pip install faster-whisper). "
+                              "Using the browser's speech recognition.",
+                }
+                return None
+            from packages.nlp.asr import WhisperTranscriber
+
+            self.status.voice = {"ok": True, "provider": "whisper", "detail": "Local Whisper (%s); audio stays on this computer" % model}
+            return WhisperTranscriber(model_size=model)
+        self.status.voice = {"ok": True, "provider": "browser", "detail": "Browser speech recognition (Chrome / Edge)"}
+        return None
+
+    def voice(self, audio: bytes, suffix: str = ".webm") -> dict:
+        """Local speech-to-text, then the ordinary command path.
+
+        Same two refusals as ``VoiceShell``: an empty transcript is not a
+        command, and a low-confidence one is quoted back rather than acted on.
+        Transcription runs outside the agent lock -- it takes seconds, and the
+        inbox poll should not wait for it.
+        """
+        import os
+        import tempfile
+
+        from packages.nlp.tts import DEFAULT_MIN_CONFIDENCE
+
+        if self.transcriber is None:
+            raise NotReady("Local voice is off. Set WHISPER_MODEL in .env, or use the browser microphone.")
+        if not audio:
+            raise ValueError("No audio was recorded.")
+        handle, path = tempfile.mkstemp(suffix=suffix if suffix.startswith(".") else ".webm")
+        try:
+            with os.fdopen(handle, "wb") as out:
+                out.write(audio)
+            transcript = self.transcriber.transcribe(path)
+        finally:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+        if transcript.is_empty:
+            return {"status": "refused", "message": "I didn't catch anything. Could you say that again?", "transcript": ""}
+        if transcript.confidence is not None and transcript.confidence < DEFAULT_MIN_CONFIDENCE:
+            return {
+                "status": "refused",
+                "message": "I think you said \"%s\", but I'm not sure. Edit it and press Enter." % transcript.text,
+                "transcript": transcript.text,
+            }
+        return self.command(transcript.text, channel="app") | {"transcript": transcript.text}
 
     def _require_agent(self) -> SyncAgent:
         if self.agent is None:

@@ -158,6 +158,14 @@ def create_app(
         raw = await file.read(5 * 1024 * 1024 + 1)
         return {"results": await asyncio.to_thread(run, runtime.upload_eml, raw)}
 
+    @app.post("/api/voice")
+    async def voice(file: UploadFile = File(...)):
+        audio = await file.read(10 * 1024 * 1024 + 1)
+        if len(audio) > 10 * 1024 * 1024:
+            raise HTTPException(413, "That recording is too long.")
+        suffix = "." + (file.filename or "audio.webm").rsplit(".", 1)[-1][:5]
+        return await asyncio.to_thread(run, runtime.voice, audio, suffix)
+
     @app.post("/api/scan")
     def scan():
         try:
@@ -186,9 +194,9 @@ def create_app(
 
             if zone_info(changes["zone"]) is None:
                 raise HTTPException(422, "Unknown time zone %r" % changes["zone"])
-        saved = runtime.state.get_value("settings", {}) or {}
+        saved = runtime.store.get_value("settings", {}) or {}
         saved.update(changes)
-        runtime.state.set_value("settings", saved)
+        runtime.store.set_value("settings", saved)
         runtime.build()
         scheduler.poke_inbox()
         return runtime.status_dict()
@@ -197,8 +205,7 @@ def create_app(
     def reset_demo():
         if runtime.settings.mode != "demo":
             raise HTTPException(409, "Reset is only for demo mode.")
-        runtime.state.reset()
-        runtime.build()
+        runtime.build()  # demo state is in memory; a rebuild starts it afresh
         scheduler.poke_inbox()
         return runtime.status_dict()
 
@@ -225,9 +232,9 @@ def create_app(
             runtime.google.complete(code, state, error)
         except AuthFlowError as exc:
             return RedirectResponse("/connections/?error=%s" % _q(str(exc)), status_code=303)
-        saved = runtime.state.get_value("settings", {}) or {}
+        saved = runtime.store.get_value("settings", {}) or {}
         saved["mode"] = "live"
-        runtime.state.set_value("settings", saved)
+        runtime.store.set_value("settings", saved)
         runtime.build()
         scheduler.poke_inbox()
         return RedirectResponse("/connections/?connected=google", status_code=303)
@@ -265,13 +272,31 @@ def create_app(
     if dashboard.exists():
         app.mount("/research", StaticFiles(directory=dashboard, html=True), name="research")
     if WEB_OUT.exists():
-        app.mount("/", StaticFiles(directory=WEB_OUT, html=True), name="web")
+        app.mount("/", _NextExport(directory=WEB_OUT, html=True), name="web")
     else:
         @app.get("/", response_class=HTMLResponse)
         def no_ui():
             return _NO_UI
 
     return app
+
+
+class _NextExport(StaticFiles):
+    """Static files for a Next.js export, plus its segment-prefetch naming.
+
+    The client asks for ``bookings/__next.bookings.__PAGE__.txt`` while the
+    export writes ``bookings/__next.bookings/__PAGE__.txt``. A plain file server
+    answers 404 and every client-side navigation degrades to a full reload.
+    """
+
+    def lookup_path(self, path: str):
+        full, stat = super().lookup_path(path)
+        if stat is None:
+            head, _, name = path.replace("\\", "/").rpartition("/")
+            if name.startswith("__next.") and name.endswith(".txt"):
+                nested = "__next." + "/".join(name[len("__next."):-len(".txt")].split(".")) + ".txt"
+                return super().lookup_path(head + "/" + nested if head else nested)
+        return full, stat
 
 
 def _test_connection(runtime: Runtime, name: str) -> dict:

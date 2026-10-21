@@ -72,6 +72,10 @@ class Settings:
     ollama_host: str = ""
     ollama_model: str = "qwen2.5:7b-instruct"
 
+    #: faster-whisper model size (e.g. "base.en"). Empty = the browser's own
+    #: speech recognition, which sends audio to Google / Microsoft.
+    whisper_model: str = ""
+
     #: Optional; normally the passphrase lives in the OS keyring (secrets.py).
     token_passphrase: str = field(default="", repr=False)
 
@@ -124,6 +128,7 @@ class Settings:
             "telegram_chat_id": self.telegram_chat_id,
             "ollama_host": self.ollama_host,
             "ollama_model": self.ollama_model,
+            "whisper_model": self.whisper_model,
             "home": str(self.home),
         }
 
@@ -149,6 +154,7 @@ _ENV_MAP = {
     "TELEGRAM_CHAT_ID": ("telegram_chat_id", str),
     "OLLAMA_HOST": ("ollama_host", str),
     "OLLAMA_MODEL": ("ollama_model", str),
+    "WHISPER_MODEL": ("whisper_model", str),
     "BSYNC_TOKEN_PASSPHRASE": ("token_passphrase", str),
 }
 

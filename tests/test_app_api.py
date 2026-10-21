@@ -287,3 +287,62 @@ def test_full_google_connect_flow(clock, tmp_path) -> None:
     # The state is single-use.
     again = client.get("/auth/google/callback?code=good&state=%s" % state, follow_redirects=False)
     assert "error=" in again.headers["location"]
+
+
+# -- local voice ------------------------------------------------------------
+
+
+class _ScriptedTranscriber:
+    name = "scripted"
+
+    def __init__(self, text: str, confidence: float | None):
+        self.text, self.confidence = text, confidence
+
+    def transcribe(self, audio):
+        from packages.nlp.asr import Transcript
+
+        return Transcript(self.text, self.confidence, model=self.name)
+
+
+def _voice(client: TestClient):
+    return client.post("/api/voice", files={"file": ("a.webm", b"\x1aE\xdf\xa3fake", "audio/webm")}, headers=H)
+
+
+def test_voice_is_off_until_whisper_is_configured(clock) -> None:
+    assert _voice(_client(clock)).status_code == 409
+
+
+def test_a_clear_recording_runs_as_a_command(clock) -> None:
+    client = _client(clock)
+    client.app.state.runtime.transcriber = _ScriptedTranscriber("book a cab to Chennai tomorrow at 7 am", 0.9)
+    body = _voice(client).json()
+    assert body["status"] == "success"
+    assert body["transcript"].startswith("book a cab")
+
+
+def test_a_mumbled_recording_is_quoted_back_not_acted_on(clock) -> None:
+    client = _client(clock)
+    runtime = client.app.state.runtime
+    runtime.transcriber = _ScriptedTranscriber("cancel my flight", 0.2)
+    before = len(runtime.events())
+    body = _voice(client).json()
+    assert body["status"] == "refused"
+    assert "not sure" in body["message"]
+    assert len(runtime.events()) == before
+    assert client.get("/api/activity").json()["activity"] == []
+
+
+def test_demo_restarts_cleanly_and_settings_survive(clock, tmp_path) -> None:
+    """Regression: demo mail used to stay 'seen' on disk while the demo calendar
+    reset, so a restarted demo showed no bookings and no questions."""
+    store = AppState(tmp_path / "app.db")
+    first = Runtime(Settings(), store, clock=clock)
+    assert first.scan()["handled"] == 8
+    store.set_value("settings", {"poll_minutes": 15})
+
+    second = Runtime(Settings(), store, clock=clock)
+
+    assert second.scan()["handled"] == 8
+    assert len(second.confirmations()) == 2
+    assert second.settings.poll_minutes == 15
+    assert store.activity() == []  # demo noise never reaches the persistent history

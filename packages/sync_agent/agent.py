@@ -95,6 +95,7 @@ class SyncAgent:
         activation: ActivationWindow | None = None,
         zone: str | None = None,
         email_fallback: EmailFallback | None = None,
+        alarm_minutes: int | None = None,
     ):
         self.calendar = calendar
         self.extractor = extractor or BaselineExtractor()
@@ -113,6 +114,8 @@ class SyncAgent:
         #: could not parse. Only ever consulted for mail that would otherwise be
         #: quarantined, so it can rescue a booking but never override a rule.
         self.email_fallback = email_fallback
+        #: Reminder lead time for new events. None keeps BookingEvent's default.
+        self.alarm_minutes = alarm_minutes
 
     # -- UC1 / UC3 / query: a spoken or typed command ---------------------
 
@@ -223,6 +226,7 @@ class SyncAgent:
             location=extraction.location,
             end_time=extraction.end_time,
             details=extraction.details,
+            alarm_minutes=self.alarm_minutes,
         )
         tape.think("email says %s for %s at %s" % (extraction.status.value, extraction.title, extraction.date_time))
         return _with_meta(self._decide_and_act(booking, now, tape, warning=trust.warning()), meta)
@@ -431,6 +435,7 @@ class SyncAgent:
             booking_ref=slots.get("booking_ref"),
             destination=slots.get("destination"),
             location=slots.get("location"),
+            alarm_minutes=self.alarm_minutes,
         )
         return self._decide_and_act(booking, now, tape)
 
@@ -565,6 +570,7 @@ def _build_booking(
     location: str | None = None,
     end_time: datetime | None = None,
     details: dict | None = None,
+    alarm_minutes: int | None = None,
 ) -> BookingEvent:
     cls = _BOOKING_CLASSES[booking_type]
     # Only the fields this subclass declares: a Flight's details handed to a
@@ -582,6 +588,7 @@ def _build_booking(
         destination=destination,
         location=location,
         end_time=end_time,
+        **({"alarm_offset_min": alarm_minutes} if alarm_minutes is not None else {}),
         **extra,
     )
 

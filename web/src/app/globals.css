@@ -1,0 +1,181 @@
+@import "tailwindcss";
+
+/* Design tokens. Every colour in the UI comes from here, so light and dark are
+   one decision each, not a hunt through components. */
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --surface-2: #f1f3f6;
+  --border: #e3e6eb;
+  --border-strong: #868d9c; /* 3:1 on white: input and button edges (WCAG 1.4.11) */
+  --text: #121826;
+  --text-2: #4a5263;
+  --text-3: #626a7c; /* >= 4.6:1 on every light surface it sits on */
+  --accent: #2b59d9;
+  --accent-hover: #2249b8;
+  --accent-soft: #e8eefc;
+  --accent-text: #1f45ad;
+  --ok: #157a4a;
+  --ok-soft: #e4f4ec;
+  --warn: #9a5b00;
+  --warn-soft: #fdf1dc;
+  --warn-border: #f0cf8f;
+  --danger: #c0352b;
+  --danger-hover: #a52b22;
+  --danger-soft: #fbe9e7;
+  --focus: #2b59d9;
+  --shadow: 0 1px 2px rgb(16 24 40 / 0.05), 0 1px 3px rgb(16 24 40 / 0.06);
+  --shadow-lg: 0 8px 24px rgb(16 24 40 / 0.08), 0 2px 6px rgb(16 24 40 / 0.05);
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0d1017;
+    --surface: #151a23;
+    --surface-2: #1c222d;
+    --border: #262d3a;
+    --border-strong: #6a7386;
+    --text: #e8ebf1;
+    --text-2: #aab2c2;
+    --text-3: #8a93a5;
+    --accent: #6d93ff;
+    --accent-hover: #86a6ff;
+    --accent-soft: #1b2847;
+    --accent-text: #9db7ff;
+    --ok: #4cc58a;
+    --ok-soft: #12291f;
+    --warn: #f2b955;
+    --warn-soft: #2c2110;
+    --warn-border: #5c4416;
+    --danger: #f17067;
+    --danger-hover: #f58a83;
+    --danger-soft: #331716;
+    --focus: #86a6ff;
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.4);
+    --shadow-lg: 0 10px 30px rgb(0 0 0 / 0.45);
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: #0d1017;
+  --surface: #151a23;
+  --surface-2: #1c222d;
+  --border: #262d3a;
+  --border-strong: #6a7386;
+  --text: #e8ebf1;
+  --text-2: #aab2c2;
+  --text-3: #8a93a5;
+  --accent: #6d93ff;
+  --accent-hover: #86a6ff;
+  --accent-soft: #1b2847;
+  --accent-text: #9db7ff;
+  --ok: #4cc58a;
+  --ok-soft: #12291f;
+  --warn: #f2b955;
+  --warn-soft: #2c2110;
+  --warn-border: #5c4416;
+  --danger: #f17067;
+  --danger-hover: #f58a83;
+  --danger-soft: #331716;
+  --focus: #86a6ff;
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.4);
+  --shadow-lg: 0 10px 30px rgb(0 0 0 / 0.45);
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-line: var(--border);
+  --color-line-strong: var(--border-strong);
+  --color-ink: var(--text);
+  --color-ink-2: var(--text-2);
+  --color-ink-3: var(--text-3);
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-ink: var(--accent-text);
+  --color-ok: var(--ok);
+  --color-ok-soft: var(--ok-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-warn-line: var(--warn-border);
+  --color-danger: var(--danger);
+  --color-danger-hover: var(--danger-hover);
+  --color-danger-soft: var(--danger-soft);
+  --font-sans: var(--font-sans-family), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-mono-family), ui-monospace, monospace;
+  --shadow-card: var(--shadow);
+  --shadow-pop: var(--shadow-lg);
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-feature-settings: "cv11", "ss01";
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.animate-rise {
+  animation: rise 0.22s ease-out both;
+}
+
+html {
+  /* The mobile header and tab bar are sticky; keep focused elements clear of them. */
+  scroll-padding-top: 4.5rem;
+  scroll-padding-bottom: 5.5rem;
+  -webkit-tap-highlight-color: transparent;
+}
+
+a,
+button,
+input,
+select,
+label {
+  touch-action: manipulation;
+}
+
+@media (min-width: 1024px) {
+  html {
+    scroll-padding-top: 1rem;
+    scroll-padding-bottom: 1rem;
+  }
+}
