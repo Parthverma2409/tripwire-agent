@@ -15,12 +15,15 @@ import {
   UtensilsCrossed,
 } from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { TrustBadge, TypeIcon, typeLabel } from "@/components/booking-bits";
-import { Badge, Card, EmptyState, ErrorNote, Skeleton } from "@/components/ui";
+import { useToast } from "@/components/toast";
+import { Badge, Button, Card, EmptyState, ErrorNote, Skeleton } from "@/components/ui";
+import { post } from "@/lib/api";
 import { dateLong, dateTime, displayRef, parseLocal, relative, senderName, stageLabel, time } from "@/lib/format";
 import { useNow, useResource } from "@/lib/live";
-import type { BookingHistory, BookingType, EventDetail, TrustLevel } from "@/lib/types";
+import type { BookingHistory, BookingType, CommandResult, EventDetail, TrustLevel } from "@/lib/types";
 
 const ORIGIN: Record<string, string> = {
   gmail: "Added by Gmail from a booking email",
@@ -84,6 +87,69 @@ function span(start: string, end: string | null) {
   if (!end) return dateTime(start);
   const sameDay = start.slice(0, 10) === end.slice(0, 10);
   return sameDay ? `${dateLong(start)}, ${time(start)} – ${time(end)}` : `${dateTime(start)} – ${dateTime(end)}`;
+}
+
+/** Remove the event; for a Swiggy table Tripwire booked, optionally the table too. */
+function CancelPanel({ id, title, detail }: { id: string; title: string; detail: EventDetail }) {
+  const toast = useToast();
+  const router = useRouter();
+  const [asking, setAsking] = useState(false);
+  const [alsoVendor, setAlsoVendor] = useState(true);
+  const [busy, setBusy] = useState(false);
+
+  async function cancel() {
+    setBusy(true);
+    try {
+      const result = await post<CommandResult>(`/api/events/${encodeURIComponent(id)}/cancel`, {
+        cancel_reservation: detail.can_cancel_reservation && alsoVendor,
+      });
+      toast(result.status === "success" ? "ok" : "error", result.message);
+      if (result.status === "success") router.push("/bookings/");
+    } catch (e) {
+      toast("error", e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!asking) {
+    return (
+      <Button variant="ghost" size="sm" className="text-danger hover:text-danger" onClick={() => setAsking(true)} icon={<CalendarX2 className="size-4" aria-hidden />}>
+        Cancel booking
+      </Button>
+    );
+  }
+  return (
+    <div role="group" aria-labelledby="cancel-q" className="basis-full rounded-xl border border-danger/40 bg-danger-soft/40 p-4">
+      <p id="cancel-q" className="text-sm font-semibold text-ink">
+        Remove “{title}” from your calendar?
+      </p>
+      {detail.can_cancel_reservation ? (
+        <label className="mt-2 flex items-start gap-2 text-[13px] text-ink-2">
+          <input
+            type="checkbox"
+            name="also-swiggy"
+            checked={alsoVendor}
+            onChange={(e) => setAlsoVendor(e.target.checked)}
+            className="mt-0.5 size-4 accent-[var(--danger)]"
+          />
+          Also cancel the table on Swiggy Dineout
+        </label>
+      ) : (
+        <p className="mt-1 text-[13px] text-ink-2 text-pretty">
+          This removes it from your calendar only. To cancel the booking itself, use the airline, hotel or app you booked with.
+        </p>
+      )}
+      <div className="mt-3 flex flex-wrap gap-2">
+        <Button variant="danger" size="sm" busy={busy} onClick={cancel}>
+          {detail.can_cancel_reservation && alsoVendor ? "Cancel table and remove" : "Remove event"}
+        </Button>
+        <Button size="sm" disabled={busy} onClick={() => setAsking(false)}>
+          Keep it
+        </Button>
+      </div>
+    </div>
+  );
 }
 
 export default function BookingDetailPage() {
@@ -194,6 +260,7 @@ export default function BookingDetailPage() {
                 Original email
               </ExternalButton>
             ) : null}
+            {!data.gone && event && id ? <CancelPanel id={id} title={title} detail={data} /> : null}
           </div>
           {data.links.uber ? (
             <p className="mt-3 text-[12px] text-ink-3">
@@ -232,7 +299,9 @@ export default function BookingDetailPage() {
           </h2>
           <Card className="space-y-3 p-4 text-sm">
             <p className="text-ink">{origin ? ORIGIN[origin] : "On your calendar"}</p>
-            {email ? (
+            {email?.stage === "swiggy" ? (
+              <p className="text-[13px] text-ink-2">Booked through Swiggy Dineout, after you approved it.</p>
+            ) : email ? (
               <div className="rounded-xl bg-surface-2 p-3">
                 <p className="truncate font-medium text-ink" title={email.subject}>
                   {email.subject || "(no subject)"}

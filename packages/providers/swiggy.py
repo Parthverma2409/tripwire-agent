@@ -144,6 +144,7 @@ def _token_payload(client_id: str, status: int, raw: bytes, now: float | None) -
         "client_id": client_id,
         "access_token": data["access_token"],
         "refresh_token": data.get("refresh_token"),
+        "issued_at": issued,
         "expires_at": issued + float(data.get("expires_in") or 3600),
     }
 
@@ -178,16 +179,30 @@ class SwiggySession:
     store: TokenStore
     transport: Transport = urllib_transport
     clock: Callable[[], float] = time.time
+    #: Rotate a token older than this even while it is valid. Swiggy's refresh
+    #: token does not outlive the access token by much (one was dead six days after
+    #: a sign-in whose access token lasted five),
+    #: so waiting for expiry to refresh can mean refreshing with a dead token.
+    max_age: float | None = None
     _lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def token(self, force_refresh: bool = False) -> str:
         with self._lock:
             payload = self.store.load()
             # Refresh a minute early: a token that dies mid-call is a failed call.
-            if force_refresh or payload.get("expires_at", 0) - 60 <= self.clock():
+            expired = force_refresh or payload.get("expires_at", 0) - 60 <= self.clock()
+            aged = self.max_age is not None and payload.get("issued_at", 0) + self.max_age <= self.clock()
+            if expired or aged:
                 if not payload.get("refresh_token"):
                     raise SwiggyAuthError("Swiggy sign-in expired. Connect Swiggy again.")
-                payload = refresh_tokens(payload["client_id"], payload["refresh_token"], self.transport, self.clock())
+                try:
+                    payload = refresh_tokens(payload["client_id"], payload["refresh_token"], self.transport, self.clock())
+                except SwiggyAuthError:
+                    raise
+                except SwiggyError:
+                    if expired:
+                        raise
+                    return payload["access_token"]  # an early rotation can wait for the next call
                 self.store.save(payload)
             return payload["access_token"]
 

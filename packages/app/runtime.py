@@ -44,7 +44,7 @@ from packages.nlp.baseline import BaselineExtractor
 from packages.nlp.extractor import FallbackExtractor, OllamaExtractor
 from packages.nlp.zones import zone_info
 from packages.notify.telegram import BotEvent, TelegramBot, TelegramError
-from packages.providers.swiggy import SwiggyError
+from packages.providers.swiggy import SwiggyAuthError, SwiggyError
 from packages.providers.calendar import CalendarError, CalendarProvider
 from packages.providers.eml import parse_eml
 from packages.providers.mail import MailProvider, RawEmail
@@ -53,7 +53,7 @@ from packages.sync_agent.agent import AgentResult, SyncAgent, guess_type
 
 from .config import Settings
 from .state import AppState
-from .swiggy import SwiggyDesk, SwiggyFlowError, parse_table_request
+from .swiggy import SwiggyDesk, SwiggyFlowError, parse_food_request, parse_table_request
 
 
 class NotReady(RuntimeError):
@@ -401,6 +401,9 @@ class Runtime:
         table = parse_table_request(text, self.now())
         if table is not None:
             return self._swiggy_command(text, table, channel)
+        food = parse_food_request(text)
+        if food is not None:
+            return self._food_command(text, food, channel)
         with self.lock:
             agent = self._require_agent()
             result = self._guard(lambda: agent.handle_command(text, self.now()))
@@ -661,6 +664,24 @@ class Runtime:
 
     # -- Swiggy ------------------------------------------------------------
 
+    def swiggy_failed(self, exc: Exception) -> None:
+        """A Swiggy call failed. If Swiggy has signed Tripwire out, forget the
+        dead sign-in and say so once, so the app asks to connect again instead
+        of showing a connection that fails every call."""
+        if not isinstance(exc, SwiggyAuthError):
+            return
+        message = "Swiggy signed Tripwire out (the sign-in expired). Connect Swiggy again on the Connections page."
+        self.status.swiggy = {"ok": False, "detail": message}
+        if self.swiggy is None:
+            return
+        self.swiggy = None
+        if self.swiggy_auth is not None:
+            self.swiggy_auth.disconnect()
+        self.state.log(channel="swiggy", kind="auth", input=None, status="failure", message=message)
+        self.notify(message, kind="swiggy")
+        self.bus.publish("activity", {})
+        self.bus.publish("swiggy", {})
+
     def _swiggy_command(self, text: str, table, channel: str) -> dict:
         request_id = None
         if self.swiggy is None:
@@ -671,6 +692,7 @@ class Runtime:
             try:
                 proposal = self.swiggy.propose(table, self.now(), channel)
             except (SwiggyFlowError, SwiggyError) as exc:
+                self.swiggy_failed(exc)
                 status, message = "refused", str(exc)
             else:
                 status, message, request_id = "awaiting_confirmation", proposal.prompt, proposal.request_id
@@ -700,6 +722,7 @@ class Runtime:
         try:
             booking = self.swiggy.book(proposal)
         except (SwiggyFlowError, SwiggyError) as exc:
+            self.swiggy_failed(exc)
             return self._swiggy_outcome("failure", "Swiggy couldn't book it: %s" % exc, request_id, channel, decision)
         payload = self.ingest_booking(booking, "Swiggy Dineout %s" % booking.booking_ref, channel,
                                       meta={"vendor_id": "swiggy", "stage": "swiggy"})
@@ -740,8 +763,81 @@ class Runtime:
                 self._swiggy_ok()
         except SwiggyError as exc:
             self.status.swiggy = {"ok": False, "detail": str(exc)}
+            self.swiggy_failed(exc)
         self.bus.publish("activity", {})
         self.bus.publish("swiggy", {})
+
+    def _food_command(self, text: str, query: str, channel: str) -> dict:
+        """Tripwire suggests food; it never orders it. The reply points at the
+        Food page (or at connecting Swiggy, which the ideas come from)."""
+        if self.swiggy is None:
+            message = "I don't place food orders, but with Swiggy connected I can show ideas and offers near you."
+            link, label = "/connections/", "Connect Swiggy"
+        else:
+            message = "I don't place food orders, but here are ideas%s, with today's offers. You order in Swiggy." % (
+                " for “%s”" % query if query else "")
+            link = "/food/" + ("?q=%s" % urllib.parse.quote(query) if query else "")
+            label = "See food ideas"
+        self.state.log(channel=channel, kind="command", input=text, status="success", message=message,
+                       meta={"vendor_id": "swiggy", "food_query": query})
+        self.bus.publish("activity", {})
+        return {"status": "success", "message": message, "needs_clarification": False, "request_id": None,
+                "trajectory_id": None, "scores": None, "changes": [],
+                "meta": {"link": link, "link_label": label, "food_query": query}}
+
+    def food_ideas(self, query: str) -> dict:
+        if self.swiggy is None:
+            raise NotReady("Connect Swiggy (Connections page) to see food ideas and offers.")
+        try:
+            return self.swiggy.food_ideas(query or "popular")
+        except SwiggyFlowError as exc:
+            raise NotReady(str(exc)) from exc
+        except SwiggyError as exc:
+            self.swiggy_failed(exc)
+            raise NotReady(str(exc)) from exc
+
+    def food_coupons(self, restaurant_id: str) -> list[dict]:
+        if self.swiggy is None:
+            raise NotReady("Swiggy is not connected.")
+        try:
+            return self.swiggy.coupons(restaurant_id)
+        except (SwiggyFlowError, SwiggyError) as exc:
+            self.swiggy_failed(exc)
+            raise NotReady(str(exc)) from exc
+
+    # -- manual cancel -----------------------------------------------------
+
+    def cancel_event(self, event_id: str, channel: str = "app", cancel_reservation: bool = False) -> dict:
+        """The user removes an event from the app. With ``cancel_reservation`` and
+        a Swiggy table Tripwire booked, the table is cancelled at Swiggy first --
+        and if Swiggy refuses, the calendar is left alone so the two still agree."""
+        note = self.state.get_value("booking:%s" % event_id, {}) or {}
+        prefix = ""
+        if cancel_reservation:
+            order_id = _swiggy_order(note)
+            if not order_id:
+                raise ValueError("Tripwire can only cancel reservations it booked on Swiggy.")
+            if self.swiggy is None:
+                raise NotReady("Connect Swiggy to cancel the reservation there.")
+            try:
+                self.swiggy.cancel_table(order_id)
+            except (SwiggyFlowError, SwiggyError) as exc:
+                self.swiggy_failed(exc)
+                message = ("Swiggy couldn't cancel it (%s). Your calendar is unchanged; cancel in the Swiggy app "
+                           "or call Swiggy on 080-67466729." % exc)
+                self.state.log(channel=channel, kind="cancel", input=event_id, status="failure", message=message)
+                self.bus.publish("activity", {})
+                return {"status": "failure", "message": message, "changes": [], "request_id": None, "meta": {}}
+            prefix = "Cancelled the table on Swiggy (order %s). " % order_id
+        with self.lock:
+            agent = self._require_agent()
+            result = self._guard(lambda: agent.remove_event(event_id, self.now()))
+            if prefix:
+                result.message = prefix + result.message
+                result.meta = {"vendor_id": "swiggy"}
+            payload = self._record(result, channel=channel, kind="cancel", input=event_id)
+        self._after(result, channel)
+        return payload
 
     def swiggy_orders(self) -> list[dict]:
         if self.swiggy is None:
@@ -749,6 +845,7 @@ class Runtime:
         try:
             return self.swiggy.active_orders()
         except SwiggyError as exc:
+            self.swiggy_failed(exc)
             raise NotReady(str(exc)) from exc
 
     # -- booking detail ----------------------------------------------------
@@ -790,6 +887,8 @@ class Runtime:
             "email": note.get("email"),
             "history": list(reversed(note.get("history") or [])),
             "links": _links(base, note, extra or {}, kind),
+            #: What "Cancel" can do besides removing the calendar event.
+            "can_cancel_reservation": bool(_swiggy_order(note)) and self.swiggy is not None,
         }
 
 
@@ -835,6 +934,14 @@ def _booking_fields(booking) -> dict:
             continue
         out[f.name] = value
     return out
+
+
+def _swiggy_order(note: dict) -> str | None:
+    """The Dineout order id, for a table Tripwire booked on Swiggy."""
+    email = note.get("email") or {}
+    if email.get("vendor_id") == "swiggy" and note.get("booking_type") == "restaurant":
+        return note.get("booking_ref")
+    return None
 
 
 def _links(event: dict | None, note: dict, extra: dict, kind: str | None) -> dict:

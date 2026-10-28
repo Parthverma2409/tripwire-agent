@@ -16,9 +16,10 @@ pytest.importorskip("httpx")
 from packages.app.config import Settings  # noqa: E402
 from packages.app.swiggy import SwiggyDesk  # noqa: E402
 from packages.core.models import BookingType, CalendarEvent  # noqa: E402
+from packages.providers.swiggy import Swiggy, SwiggySession  # noqa: E402
 from tests.test_app_api import Clock, H, _client, _telegram_settings  # noqa: E402
 from tests.test_connectors import FakeTelegram  # noqa: E402
-from tests.test_swiggy import FakeSwiggy  # noqa: E402
+from tests.test_swiggy import FakeSwiggy, MemoryStore  # noqa: E402
 from tests.test_swiggy import _client as swiggy_client  # noqa: E402
 
 
@@ -184,6 +185,23 @@ def test_swiggy_order_updates_are_notified(clock) -> None:
     runtime.swiggy_poll()
     assert _texts(telegram) == ["Swiggy: Meghana Foods -- Out for delivery (9 mins)"]
     assert client.get("/api/swiggy/orders").json()["orders"][0]["eta"] == "9 mins"
+
+
+def test_an_expired_swiggy_sign_in_is_dropped_and_reported_once(clock) -> None:
+    fake = FakeSwiggy()
+    store = MemoryStore({"client_id": "cid-1", "access_token": "old", "refresh_token": "dead", "expires_at": 0})
+    client = _client(clock)
+    runtime = client.app.state.runtime
+    runtime.swiggy = SwiggyDesk(Swiggy(SwiggySession(store, fake, clock=lambda: 1_000.0), fake), runtime.store,
+                                Settings())
+    runtime.swiggy_poll()
+    runtime.swiggy_poll()
+    assert runtime.swiggy is None
+    assert "Connect Swiggy again" in runtime.status.swiggy["detail"]
+    signed_out = [a for a in client.get("/api/activity").json()["activity"] if a["kind"] == "auth"]
+    assert len(signed_out) == 1
+    result = client.post("/api/command", json={"text": "book a table at Toit tomorrow at 8pm on swiggy"}, headers=H).json()
+    assert result["status"] == "refused" and "Connect Swiggy" in result["message"]
 
 
 def test_without_swiggy_a_table_request_says_how_to_connect(clock) -> None:

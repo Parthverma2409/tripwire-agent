@@ -5,6 +5,7 @@ import { ArrowUp, CircleAlert, CircleCheck, Hourglass, Info, Mic, MicOff } from 
 import { useEffect, useRef, useState } from "react";
 import { post, upload } from "@/lib/api";
 import { useResource } from "@/lib/live";
+import Link from "next/link";
 import type { CommandResult, Status } from "@/lib/types";
 
 const SUGGESTIONS = [
@@ -199,6 +200,14 @@ export function CommandBar() {
             {reply.message}
             {reply.status === "awaiting_confirmation" ? (
               <span className="text-ink-3"> It’s waiting for your OK below.</span>
+            ) : null}
+            {"meta" in reply && typeof reply.meta?.link === "string" ? (
+              <>
+                {" "}
+                <Link href={reply.meta.link} className="font-medium whitespace-nowrap text-accent-ink underline underline-offset-2">
+                  {String(reply.meta.link_label ?? "Open")} →
+                </Link>
+              </>
             ) : null}
           </p>
         </div>

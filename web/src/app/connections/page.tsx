@@ -322,7 +322,7 @@ export default function ConnectionsPage() {
           }
           steps={[
             { text: <>Click <b>Connect Swiggy</b> and sign in with your phone number and the OTP Swiggy sends. The OTP goes to Swiggy, never to Tripwire.</> },
-            { text: <>This uses Swiggy’s official connector for AI apps (the same one Claude and ChatGPT use). The sign-in lasts 30 days and renews while you use Tripwire.</> },
+            { text: <>This uses Swiggy’s official connector for AI apps (the same one Claude and ChatGPT use). Swiggy’s sign-in is short (about 5 days). Tripwire renews it once a day while it is running; if it lapses anyway, this card asks you to connect again.</> },
             { text: <>For tables, set your <b>dining area and PIN code</b> in <Link href="/settings/" className="text-accent-ink underline underline-offset-2">Settings</Link>.</> },
             { text: <>Then on Today, say “book a table at Toit for 4 tomorrow at 8pm on Swiggy”. Tripwire finds a free slot and asks before booking. Paid deals stay in the Swiggy app.</> },
           ]}

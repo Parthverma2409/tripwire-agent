@@ -26,6 +26,7 @@ import re
 import secrets
 import threading
 import time
+import urllib.parse
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
@@ -51,6 +52,8 @@ from .config import Settings
 from .keystore import SecretUnavailable, token_passphrase
 
 STATE_TTL_SEC = 600
+#: Rotate the Swiggy token daily while the app runs (see SwiggySession.max_age).
+TOKEN_MAX_AGE_SEC = 24 * 3600
 PROPOSAL_TTL = timedelta(minutes=15)
 #: How far a free slot may be from the time asked for and still be offered.
 SLOT_TOLERANCE = timedelta(minutes=45)
@@ -109,7 +112,7 @@ class SwiggyAuth:
     def client(self) -> Swiggy | None:
         if not self.connected():
             return None
-        return Swiggy(SwiggySession(self._store(), self.transport), self.transport)
+        return Swiggy(SwiggySession(self._store(), self.transport, max_age=TOKEN_MAX_AGE_SEC), self.transport)
 
     def describe(self) -> dict:
         return {"connected": self.connected(), "redirect_uri": self.settings.swiggy_redirect_uri}
@@ -237,6 +240,52 @@ class Proposal:
         }
 
 
+def _restaurant(r: dict) -> dict:
+    minutes = r.get("deliveryTimeMinutes")
+    return {
+        "id": r.get("id"),
+        "name": r.get("name"),
+        "cuisines": list(r.get("cuisines") or [])[:4],
+        "rating": r.get("avgRating"),
+        "ratings": r.get("totalRatings"),
+        "eta": r.get("deliveryTimeRange") or ("%s min" % minutes if minutes else None),
+        "cost": r.get("costForTwo"),
+        "offer": r.get("offer"),
+        "image": r.get("imageUrl"),
+        "area": r.get("areaName"),
+        "open": (r.get("availabilityStatus") or "OPEN").upper() == "OPEN",
+        "next_open": r.get("nextOpenTime"),
+        "veg": r.get("veg"),
+        "url": "https://www.swiggy.com/search?query=%s" % urllib.parse.quote(r.get("name") or ""),
+    }
+
+
+_FOOD_WORDS = re.compile(
+    r"\b(order|hungry|craving|eat|food|suggest|recommend|offers?|deals?|coupons?|biryani|pizza|burger|"
+    r"burrito|dosa|momos?|noodles|sushi|dessert|cake|ice ?cream|lunch|dinner|breakfast)\b",
+    re.I,
+)
+_NOT_FOOD = re.compile(r"\b(table|flight|train|hotel|cab|taxi|uber|ola|ride|appointment|cancel|move|reschedule|book)\b", re.I)
+_FILLER = re.compile(
+    r"\b(can|could|would|you|u|please|pls|me|i|im|i'm|want|wanna|to|some|something|now|too|also|order|get|find|"
+    r"show|suggest|recommend|any|good|best|food|ideas?|for|hungry|craving|eat|what|should|offers?|deals?|"
+    r"coupons?|on|swiggy|near|nearby|here|a|an|the)\b",
+    re.I,
+)
+
+
+def parse_food_request(text: str) -> str | None:
+    """What to search Swiggy for, or None if this isn't about food.
+
+    "order burrito from california burrito" -> "california burrito";
+    "suggest biryani" -> "biryani"; "can u order food now" -> "" (popular)."""
+    if not _FOOD_WORDS.search(text) or _NOT_FOOD.search(text):
+        return None
+    source = re.search(r"\bfrom\s+(.+)$", text, re.I)
+    query = source.group(1) if source else _FILLER.sub(" ", text)
+    return " ".join(re.findall(r"[\w'&-]+", query)).strip()
+
+
 def _location(restaurant: dict) -> str:
     return ", ".join(p for p in (restaurant.get("name"), restaurant.get("locality") or restaurant.get("area")) if p)
 
@@ -285,7 +334,62 @@ class SwiggyDesk:
             for o in self.client.active_orders()
         ]
 
+    # Food ideas (read-only: Tripwire never places an order) ---------------------
+
+    def food_ideas(self, query: str) -> dict:
+        """Delivery restaurants and dishes for ``query``, and dine-out offers."""
+        latitude, longitude = self._coordinates()
+        data = self.client.food.call("search_restaurants", {"query": query, "latitude": latitude, "longitude": longitude})
+        restaurants = [_restaurant(r) for r in data.get("restaurants") or [] if r.get("name")]
+        dishes = [
+            {"name": d.get("name"), "price": d.get("price"), "restaurant": d.get("restaurant_name") or d.get("restaurantName"),
+             "rating": d.get("rating"), "veg": d.get("isVeg"), "bestseller": bool(d.get("isBestseller"))}
+            for d in (data.get("dishes") or [])[:8] if d.get("name")
+        ]
+        try:
+            dineout = [
+                {"id": r.get("id"), "name": r.get("name"), "area": r.get("locality") or r.get("area"),
+                 "rating": (r.get("rating") or {}).get("value"), "cost": r.get("costForTwo"),
+                 "offers": [o.get("offerTitle") for o in (r.get("offers") or []) + (r.get("bankOffers") or []) if o.get("offerTitle")][:3],
+                 "deals": [d.get("dealTitle") for d in r.get("availableDeals") or [] if d.get("dealTitle")][:2]}
+                for r in self.client.search_restaurants(query, latitude, longitude, limit=6)
+            ]
+        except SwiggyError:
+            dineout = []  # delivery ideas are still worth showing without these
+        return {"query": query, "area": self.settings.dining_area, "restaurants": restaurants, "dishes": dishes,
+                "dineout": dineout}
+
+    def coupons(self, restaurant_id: str) -> list[dict]:
+        """Coupons for one restaurant, checked against your saved delivery address."""
+        data = self.client.food.call("fetch_food_coupons", {"restaurantId": restaurant_id, "addressId": self._address_id()})
+        out = []
+        for section in data.get("coupon_sections") or []:
+            for coupon in section.get("coupons") or []:
+                out.append({"title": coupon.get("title"), "subtitle": coupon.get("subtitle"),
+                            "description": coupon.get("description"), "applicable": coupon.get("applicable"),
+                            "code": coupon.get("id")})
+        return out
+
+    def _address_id(self) -> str:
+        cached = self.kv.get_value("swiggy_address", None)
+        if cached:
+            return cached
+        data = self.client.food.call("get_addresses")
+        addresses = data.get("addresses") or []
+        address_id = (data.get("resolution") or {}).get("defaultAddressId") or (addresses[0].get("id") if addresses else None)
+        if not address_id:
+            raise SwiggyFlowError("Add a delivery address in the Swiggy app first; offers depend on it.")
+        self.kv.set_value("swiggy_address", address_id)
+        return address_id
+
     # Table bookings ------------------------------------------------------------
+
+    def cancel_table(self, order_id: str) -> None:
+        """Cancel a Dineout reservation at Swiggy, and stop watching it."""
+        self.client.dineout.call("cancel_booking", {"orderId": order_id, "cancellationReason": "plan changed"})
+        tracked = self.kv.get_value("swiggy_tables", {}) or {}
+        tracked.pop(order_id, None)
+        self.kv.set_value("swiggy_tables", tracked)
 
     def propose(self, request: TableRequest, now: datetime, channel: str) -> Proposal:
         latitude, longitude = self._coordinates()

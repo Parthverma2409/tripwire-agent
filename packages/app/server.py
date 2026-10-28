@@ -27,6 +27,8 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
+from packages.providers.swiggy import SwiggyError
+
 from .config import ROOT, Settings, load_settings
 from .google_auth import AuthFlowError, GoogleAuth
 from .runtime import NotReady, Runtime
@@ -46,6 +48,11 @@ class CommandIn(BaseModel):
 
 class DecisionIn(BaseModel):
     approve: bool
+
+
+class CancelIn(BaseModel):
+    #: Also cancel the reservation at the vendor (Swiggy tables only).
+    cancel_reservation: bool = False
 
 
 class SettingsIn(BaseModel):
@@ -135,6 +142,14 @@ def create_app(
     def swiggy_orders():
         return {"orders": run(runtime.swiggy_orders)}
 
+    @app.get("/api/swiggy/food")
+    def food(q: str = ""):
+        return run(runtime.food_ideas, q.strip()[:80])
+
+    @app.get("/api/swiggy/food/{restaurant_id}/coupons")
+    def food_coupons(restaurant_id: str):
+        return {"coupons": run(runtime.food_coupons, restaurant_id)}
+
     @app.get("/api/confirmations")
     def confirmations():
         return {"confirmations": runtime.confirmations()}
@@ -163,6 +178,10 @@ def create_app(
     @app.post("/api/command")
     def command(body: CommandIn):
         return run(runtime.command, body.text, "app")
+
+    @app.post("/api/events/{event_id}/cancel")
+    def cancel_event(event_id: str, body: CancelIn):
+        return run(runtime.cancel_event, event_id, "app", body.cancel_reservation)
 
     @app.post("/api/confirmations/{request_id}")
     def decide(request_id: str, body: DecisionIn):
@@ -377,9 +396,13 @@ def _test_connection(runtime: Runtime, name: str) -> dict:
     if name == "swiggy":
         if runtime.swiggy is None:
             raise NotReady(runtime.status.swiggy.get("detail", "Swiggy is not connected."))
-        food = runtime.swiggy.client.food.list_tools()
-        dineout = runtime.swiggy.client.dineout.list_tools()
-        orders = runtime.swiggy.client.active_orders()
+        try:
+            food = runtime.swiggy.client.food.list_tools()
+            dineout = runtime.swiggy.client.dineout.list_tools()
+            orders = runtime.swiggy.client.active_orders()
+        except SwiggyError as exc:
+            runtime.swiggy_failed(exc)
+            raise
         return {"ok": True, "detail": "Signed in: %d Food and %d Dineout tools; %d active order%s"
                 % (len(food), len(dineout), len(orders), "" if len(orders) == 1 else "s")}
     if name == "ollama":

@@ -1,7 +1,7 @@
 "use client";
 
 import clsx from "clsx";
-import { Activity, CalendarDays, Inbox, Monitor, Moon, PlugZap, Settings, Sun, Sunrise } from "lucide-react";
+import { Activity, CalendarDays, Inbox, Monitor, Moon, PlugZap, Settings, Sun, Sunrise, UtensilsCrossed } from "lucide-react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useState } from "react";
@@ -10,11 +10,13 @@ import { useToast } from "./toast";
 import type { Confirmation, Status } from "@/lib/types";
 import { StatusDot } from "./ui";
 
+// `phone: false` keeps an item out of the six-slot bottom bar on small screens.
 const NAV = [
   { href: "/", label: "Today", icon: Sunrise },
   { href: "/bookings/", label: "Bookings", icon: CalendarDays },
+  { href: "/food/", label: "Food", icon: UtensilsCrossed },
   { href: "/inbox/", label: "Inbox", icon: Inbox },
-  { href: "/activity/", label: "Activity", icon: Activity },
+  { href: "/activity/", label: "Activity", icon: Activity, phone: false },
   { href: "/connections/", label: "Connections", icon: PlugZap },
   { href: "/settings/", label: "Settings", icon: Settings },
 ];
@@ -195,7 +197,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
         aria-label="Tab bar"
         className="fixed inset-x-0 bottom-0 z-30 grid grid-cols-6 border-t border-line bg-surface/95 pb-[env(safe-area-inset-bottom)] backdrop-blur lg:hidden"
       >
-        {NAV.map(({ href, label, icon: Icon }) => {
+        {NAV.filter((item) => item.phone !== false).map(({ href, label, icon: Icon }) => {
           const active = isActive(path, href);
           return (
             <Link

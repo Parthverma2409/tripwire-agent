@@ -247,6 +247,33 @@ class SyncAgent:
 
     # -- UC3: resolving a confirmation ------------------------------------
 
+    # -- the user removes an event themselves ------------------------------
+
+    def remove_event(self, event_id: str, now: datetime) -> AgentResult:
+        """The user pressed Cancel on one event in the app.
+
+        That press is the consent, so the request is opened and confirmed in one
+        step -- but still through ``ConfirmationRequest.confirm()``, the only way
+        to a ConfirmedDecision. The trajectory records it as confirmed by the
+        user, which is what it is.
+        """
+        tape = _Tape(source="system", text="remove event %s" % event_id, now=now, model="user-action")
+        events = self.calendar.list_events()
+        tape.tool("calendar.list_events", {}, len(events))
+        target = next((e for e in events if e.event_id == event_id), None)
+        if target is None:
+            tape.think("event %s is not on the calendar" % event_id)
+            return tape.done(AgentResult("refused", "That event isn't on your calendar any more."))
+        decision = Decision(ActionType.DELETE, Reason.CANCELLATION, target_event_id=event_id, payload=target,
+                            note="removed by the user")
+        request = self.confirmations.open(decision, now)
+        tape.think("user removed %r themselves; their click is the confirmation (%s)" % (target.title, request.request_id))
+        result = self._apply_confirmation(request, True, now, tape)
+        if result.status == "success":
+            result.message = "Removed %s on %s from your calendar." % (target.title, _on(target.start_time, now))
+            result.trajectory["outcome"]["user_visible"] = result.message
+        return result
+
     # -- a booking from a connected account (Swiggy) -----------------------
 
     def handle_booking(self, booking: BookingEvent, now: datetime, label: str, model: str = "connected-account") -> AgentResult:

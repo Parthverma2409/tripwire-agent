@@ -208,6 +208,41 @@ export interface EventDetail {
   } | null;
   history: BookingHistory[];
   links: { calendar?: string; email?: string; uber?: string; swiggy?: string };
+  /** A Swiggy table Tripwire booked: Cancel can also cancel it at Swiggy. */
+  can_cancel_reservation: boolean;
+}
+
+export interface FoodRestaurant {
+  id: string | null;
+  name: string;
+  cuisines: string[];
+  rating: number | null;
+  ratings: string | null;
+  eta: string | null;
+  cost: string | null;
+  offer: string | null;
+  image: string | null;
+  area: string | null;
+  open: boolean;
+  next_open: string | null;
+  veg: boolean | null;
+  url: string;
+}
+
+export interface FoodIdeas {
+  query: string;
+  area: string;
+  restaurants: FoodRestaurant[];
+  dishes: { name: string; price: number | null; restaurant: string | null; rating: string | number | null; veg: boolean | null; bestseller: boolean }[];
+  dineout: { id: string | null; name: string; area: string | null; rating: string | null; cost: string | null; offers: string[]; deals: string[] }[];
+}
+
+export interface Coupon {
+  title: string | null;
+  subtitle: string | null;
+  description: string | null;
+  applicable: boolean | null;
+  code: string | null;
 }
 
 export interface SwiggyOrder {

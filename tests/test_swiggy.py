@@ -166,6 +166,27 @@ def test_an_expired_token_is_refreshed_and_the_rotation_saved() -> None:
     assert swiggy.session.store.load()["refresh_token"] == "r2"
 
 
+def test_a_day_old_token_is_rotated_before_it_expires() -> None:
+    fake = FakeSwiggy()
+    store = MemoryStore({"client_id": "cid-1", "access_token": "good-token", "refresh_token": "r1",
+                         "issued_at": 0.0, "expires_at": 9e12})
+    Swiggy(SwiggySession(store, fake, clock=lambda: 86_400.0, max_age=86_400), fake).active_orders()
+    assert store.payload["refresh_token"] == "r2" and store.payload["issued_at"] == 86_400.0
+
+
+def test_a_failed_early_rotation_keeps_the_valid_token() -> None:
+    def offline(method, url, headers, body):
+        if url.endswith("/auth/token"):
+            return 503, {}, b"unavailable"
+        return fake(method, url, headers, body)
+
+    fake = FakeSwiggy()
+    store = MemoryStore({"client_id": "cid-1", "access_token": "good-token", "refresh_token": "r1",
+                         "issued_at": 0.0, "expires_at": 9e12})
+    Swiggy(SwiggySession(store, offline, clock=lambda: 86_400.0, max_age=86_400), offline).active_orders()
+    assert store.payload["access_token"] == "good-token" and store.saves == 0
+
+
 def test_a_401_mid_session_refreshes_once_then_gives_up() -> None:
     fake = FakeSwiggy()
     swiggy = _client(fake, token="revoked")  # not expired locally, but Swiggy says no
