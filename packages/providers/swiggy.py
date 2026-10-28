@@ -29,6 +29,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import re
 import secrets
 import threading
 import time
@@ -237,7 +238,16 @@ class McpClient:
             message = error.get("message") if isinstance(error, dict) else error
             raise SwiggyError("Swiggy %s failed: %s" % (tool, message or envelope.get("message") or "unknown error"))
         data = envelope.get("data")
-        return data if isinstance(data, dict) else {"value": data}
+        data = data if isinstance(data, dict) else {"value": data}
+        # Newer Swiggy tools answer chat clients: prose in content, the widget's
+        # data (slots, deals) in _meta. Keep both; the data we asked for wins.
+        meta = result.get("_meta")
+        if isinstance(meta, dict):
+            data = {**{k: v for k, v in meta.items() if k not in data}, **data}
+        text = "\n".join(b.get("text") or "" for b in result.get("content") or [] if isinstance(b, dict) and b.get("type") == "text")
+        if text and "text" not in data:
+            data["text"] = text
+        return data
 
     # -- protocol ------------------------------------------------------------
 
@@ -330,6 +340,10 @@ def _envelope(result: dict) -> dict:
             try:
                 parsed = json.loads(block.get("text") or "")
             except ValueError:
+                # Some tools now answer in prose for chat clients, with the data
+                # itself only in structuredContent (no {success, data} wrapper).
+                if isinstance(structured, dict) and structured and not result.get("isError"):
+                    return {"success": True, "data": structured}
                 return {"success": not result.get("isError"), "data": {"text": block.get("text")}}
             if isinstance(parsed, dict):
                 return parsed if ("success" in parsed or "data" in parsed) else {"success": True, "data": parsed}
@@ -371,7 +385,7 @@ class Swiggy:
         data = self.dineout.call("search_restaurants_dineout", {
             "query": query, "latitude": latitude, "longitude": longitude, "limit": limit,
         })
-        return list(data.get("restaurants") or [])
+        return list(data.get("restaurants") or []) or _prose_restaurants(data.get("text") or "")
 
     def slots(self, restaurant_id: str, day: str, latitude: float, longitude: float) -> list[dict]:
         data = self.dineout.call("get_available_slots", {
@@ -390,6 +404,30 @@ class Swiggy:
 
     def booking_status(self, order_id: str) -> dict:
         return self.dineout.call("get_booking_status", {"orderId": order_id})
+
+
+#: "2. Absolute Spicy Kitchen — South Indian, Biryani | 4.1★ | ₹800 for two | Tambaram (ID: 366998)"
+_PROSE_RESTAURANT = re.compile(
+    r"^\s*\d+\.\s+(?P<name>.+?)\s+[—-]\s+(?P<cuisines>[^|]*)\|\s*(?P<rating>[\d.]+)?★?\s*\|"
+    r"\s*(?P<cost>[^|]*?)\s*\|\s*(?P<area>.*?)\s*\(ID:\s*(?P<id>[\w-]+)\)\s*$",
+    re.M,
+)
+
+
+def _prose_restaurants(text: str) -> list[dict]:
+    """Dineout search results from the prose answer, shaped like the JSON ones."""
+    return [
+        {"id": m["id"], "name": m["name"].strip(), "locality": m["area"], "costForTwo": m["cost"],
+         "cuisines": [c.strip() for c in m["cuisines"].split(",") if c.strip()],
+         "rating": {"value": float(m["rating"])} if m["rating"] else {}}
+        for m in _PROSE_RESTAURANT.finditer(text)
+    ]
+
+
+def order_id_in(text: str) -> str | None:
+    """An order number quoted in a prose answer, if there is one."""
+    match = re.search(r"\b(?:order|booking)\s*(?:id|no\.?|number)?\s*[:#]?\s*([A-Za-z0-9-]{6,})", text, re.I)
+    return match.group(1) if match and any(ch.isdigit() for ch in match.group(1)) else None
 
 
 def free_deal(slot: dict) -> dict | None:

@@ -29,19 +29,23 @@ import time
 import urllib.parse
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from typing import Callable
 
 from packages.core.models import BookingStatus, BookingType, RestaurantBooking, Source
 from packages.nlp.baseline import BaselineExtractor
 from packages.nlp.resolve import resolve_datetime
 from packages.nlp.zones import zone_info
+from packages.providers.geocode import GeocodeError, nominatim
 from packages.providers.swiggy import (
     Swiggy,
+    SwiggyAuthError,
     SwiggyError,
     SwiggySession,
     Transport,
     authorization_url,
     exchange_code,
     free_deal,
+    order_id_in,
     pkce_pair,
     register_client,
     urllib_transport,
@@ -301,6 +305,8 @@ class SwiggyDesk:
     kv: object  # AppState: tracked reservations and last-seen order states
     settings: Settings
     proposals: dict[str, Proposal] = field(default_factory=dict)
+    #: (area, pin) -> {latitude, longitude, address}, when Swiggy can't place it.
+    geocoder: Callable[[str, str], dict] = nominatim
     _lock: threading.RLock = field(default_factory=threading.RLock, repr=False)
 
     # Food orders -------------------------------------------------------------
@@ -338,8 +344,9 @@ class SwiggyDesk:
 
     def food_ideas(self, query: str) -> dict:
         """Delivery restaurants and dishes for ``query``, and dine-out offers."""
-        latitude, longitude = self._coordinates()
-        data = self.client.food.call("search_restaurants", {"query": query, "latitude": latitude, "longitude": longitude})
+        # Delivery is searched from your saved Swiggy address; only Dineout
+        # needs coordinates, and it is optional here.
+        data = self.client.food.call("search_restaurants", {"query": query, "addressId": self._address_id()})
         restaurants = [_restaurant(r) for r in data.get("restaurants") or [] if r.get("name")]
         dishes = [
             {"name": d.get("name"), "price": d.get("price"), "restaurant": d.get("restaurant_name") or d.get("restaurantName"),
@@ -347,6 +354,7 @@ class SwiggyDesk:
             for d in (data.get("dishes") or [])[:8] if d.get("name")
         ]
         try:
+            latitude, longitude = self._coordinates()
             dineout = [
                 {"id": r.get("id"), "name": r.get("name"), "area": r.get("locality") or r.get("area"),
                  "rating": (r.get("rating") or {}).get("value"), "cost": r.get("costForTwo"),
@@ -354,7 +362,7 @@ class SwiggyDesk:
                  "deals": [d.get("dealTitle") for d in r.get("availableDeals") or [] if d.get("dealTitle")][:2]}
                 for r in self.client.search_restaurants(query, latitude, longitude, limit=6)
             ]
-        except SwiggyError:
+        except (SwiggyError, SwiggyFlowError):
             dineout = []  # delivery ideas are still worth showing without these
         return {"query": query, "area": self.settings.dining_area, "restaurants": restaurants, "dishes": dishes,
                 "dineout": dineout}
@@ -432,9 +440,13 @@ class SwiggyDesk:
             item_id=str(proposal.deal["itemId"]), reservation_time=int(proposal.slot["reservationTime"]),
             guests=proposal.guests, latitude=proposal.latitude, longitude=proposal.longitude,
         )
-        order_id = str(result.get("orderId") or "")
-        if not order_id or str(result.get("status", "")).upper() == "PENDING_PAYMENT":
-            raise SwiggyFlowError("Swiggy did not confirm the table (%s)." % (result.get("status") or "no order id"))
+        order_id = str(result.get("orderId") or order_id_in(result.get("text") or "") or "")
+        if str(result.get("status", "")).upper() == "PENDING_PAYMENT":
+            raise SwiggyFlowError("Swiggy did not confirm the table (PENDING_PAYMENT).")
+        if not order_id:
+            # The call went through, so a table may well be booked: never say it wasn't.
+            raise SwiggyFlowError("Swiggy accepted the request but sent no order number, so Tripwire can't track it. "
+                                  "Check Upcoming bookings in the Swiggy app before asking again.")
         tracked = self.kv.get_value("swiggy_tables", {}) or {}
         tracked[order_id] = {"when": proposal.when.isoformat(), "name": proposal.restaurant.get("name"),
                              "guests": proposal.guests, "location": _location(proposal.restaurant)}
@@ -480,7 +492,16 @@ class SwiggyDesk:
         cached = self.kv.get_value("swiggy_geo", {}) or {}
         if cached.get("area") == area and cached.get("pin") == pin:
             return cached["latitude"], cached["longitude"]
-        place = self.client.geocode(area, pin)
+        try:
+            place = self.client.geocode(area, pin)
+        except SwiggyAuthError:
+            raise
+        except SwiggyError:
+            # Swiggy no longer offers recommend_address to Tripwire's client.
+            try:
+                place = self.geocoder(area, pin)
+            except GeocodeError as exc:
+                raise SwiggyFlowError(str(exc)) from None
         self.kv.set_value("swiggy_geo", {"area": area, "pin": pin, **place})
         return place["latitude"], place["longitude"]
 

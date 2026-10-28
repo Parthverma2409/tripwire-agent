@@ -68,6 +68,13 @@ class FakeSwiggy:
         ]
         self.session_id = "sess-1"
 
+    PROSE = {
+        "get_addresses": {"addresses": [{"id": "addr-1", "addressTag": "Home"}],
+                          "resolution": {"defaultAddressId": "addr-1"}},
+        "search_restaurants": {"restaurants": [{"id": "F1", "name": "Meghana Foods", "areaName": "Indiranagar"}],
+                               "dishes": []},
+    }
+
     def __call__(self, method: str, url: str, headers: dict, body: bytes | None):
         if url.endswith("/auth/register"):
             return 201, {}, json.dumps({"client_id": "cid-1", **json.loads(body)}).encode()
@@ -94,6 +101,10 @@ class FakeSwiggy:
         if message["method"] == "tools/list":
             return self._reply(message["id"], {"tools": [{"name": "track_food_order"}, {"name": "book_table"}]})
         name, args = message["params"]["name"], message["params"]["arguments"]
+        if name in self.PROSE:
+            # Answered the newer way: prose for a chat client, data only in structuredContent.
+            return self._reply(message["id"], {"content": [{"type": "text", "text": "Found it. Ask the user."}],
+                                               "structuredContent": self.PROSE[name]})
         return self._reply(message["id"], {"content": [{"type": "text", "text": json.dumps(self._tool(name, args))}]})
 
     def _tool(self, name: str, args: dict) -> dict:
@@ -213,6 +224,20 @@ def test_a_failed_tool_envelope_raises_with_swiggys_message() -> None:
         McpClient("https://mcp.swiggy.com/food", _client(fake).session, fake).call("nope")
 
 
+def test_food_ideas_search_from_the_saved_address() -> None:
+    fake = FakeSwiggy()
+    settings = Settings(dining_area="Indiranagar, Bangalore", dining_pin="560038")
+    ideas = SwiggyDesk(_client(fake), AppState(":memory:"), settings).food_ideas("biryani")
+    assert [r["name"] for r in ideas["restaurants"]] == ["Meghana Foods"]
+    search = next(p for k, m, p in fake.calls if k == "rpc" and p.get("name") == "search_restaurants")
+    assert search["arguments"] == {"query": "biryani", "addressId": "addr-1"}
+
+
+def test_food_ideas_without_a_dining_area_skip_only_dineout() -> None:
+    ideas = SwiggyDesk(_client(FakeSwiggy()), AppState(":memory:"), Settings()).food_ideas("biryani")
+    assert ideas["restaurants"] and ideas["dineout"] == []
+
+
 def test_paid_deals_are_never_treated_as_free() -> None:
     assert free_deal({"deals": [{"itemId": "a", "isFree": True, "bookingPrice": 250}]}) is None
     assert free_deal({"deals": [{"itemId": "a", "isFree": False}]}) is None
@@ -312,3 +337,90 @@ def test_sign_in_registers_once_and_the_state_is_single_use(tmp_path) -> None:
         auth.complete("good", query["state"])
     auth.disconnect()
     assert not auth.connected()
+
+
+def test_tables_fall_back_to_openstreetmap_when_swiggy_cannot_place_the_area() -> None:
+    fake = FakeSwiggy()
+    looked_up = []
+
+    def geocoder(area: str, pin: str) -> dict:
+        looked_up.append((area, pin))
+        return {"latitude": 12.97, "longitude": 77.64, "address": area}
+
+    original = fake._tool
+    fake._tool = lambda name, args: ({"success": False, "error": {"message": "This tool is not available for this client."}}
+                                     if name == "recommend_address" else original(name, args))
+    settings = Settings(dining_area="Indiranagar, Bangalore", dining_pin="560038")
+    desk = SwiggyDesk(_client(fake), AppState(":memory:"), settings, geocoder=geocoder)
+    request = parse_table_request("book a table at Toit tomorrow at 8pm on swiggy", NOW)
+    assert desk.propose(request, NOW, "app").restaurant["name"] == "Toit"
+    desk.propose(request, NOW, "app")
+    assert looked_up == [("Indiranagar, Bangalore", "560038")]  # cached after the first lookup
+
+
+def test_nominatim_tries_the_pin_then_the_area() -> None:
+    from packages.providers.geocode import GeocodeError, nominatim
+
+    asked = []
+
+    def fetch(url: str, headers: dict):
+        asked.append(urllib.parse.parse_qs(urllib.parse.urlparse(url).query))
+        assert "Tripwire" in headers["User-Agent"]
+        return 200, (b"[]" if len(asked) == 1 else b'[{"lat": "12.84", "lon": "80.15", "display_name": "Kelambakkam"}]')
+
+    place = nominatim("Chennai", "600127", fetch)
+    assert place == {"latitude": 12.84, "longitude": 80.15, "address": "Kelambakkam"}
+    assert asked[0]["postalcode"] == ["600127"] and asked[1]["q"] == ["Chennai 600127 India"]
+    with pytest.raises(GeocodeError):
+        nominatim("Nowhere", "000000", lambda url, headers: (200, b"[]"))
+
+
+class ChatSwiggy(FakeSwiggy):
+    """Dineout answering the newer way: prose for search and booking, slots in _meta."""
+
+    def __call__(self, method, url, headers, body):
+        message = json.loads(body) if body and body.startswith(b"{") and "/auth/" not in url else {}
+        name = (message.get("params") or {}).get("name")
+        if name == "search_restaurants_dineout":
+            self.calls.append(("rpc", "tools/call", message["params"]))
+            text = ("Found 2 restaurant(s) matching \"toit\", showing 2.\n"
+                    "1. Toit Lite — Pub | 4.0★ | ₹1,500 for two | Koramangala (ID: R9)\n"
+                    "2. Toit — Brewery, Pub | 4.6★ | ₹2,500 for two | Indiranagar (ID: R1)")
+            return self._reply(message["id"], {"content": [{"type": "text", "text": text}], "structuredContent": {}})
+        if name == "get_available_slots":
+            self.calls.append(("rpc", "tools/call", message["params"]))
+            return self._reply(message["id"], {"content": [{"type": "text", "text": "Found 2 slot(s)."}],
+                                               "structuredContent": {"message": "Found 2 slot(s)"},
+                                               "_meta": {"slots": self.slots, "widgetFlags": {}}})
+        if name == "book_table":
+            self.calls.append(("rpc", "tools/call", message["params"]))
+            return self._reply(message["id"], {"content": [{"type": "text", "text": self.booked_text}]})
+        return super().__call__(method, url, headers, body)
+
+    booked_text = "Table booked at Toit. Order ID: 900777. Show this at the restaurant."
+
+
+def _chat_desk(fake: ChatSwiggy) -> SwiggyDesk:
+    settings = Settings(dining_area="Indiranagar, Bangalore", dining_pin="560038")
+    return SwiggyDesk(_client(fake), AppState(":memory:"), settings)
+
+
+def test_prose_search_and_meta_slots_still_make_a_proposal() -> None:
+    proposal = _chat_desk(ChatSwiggy()).propose(parse_table_request("book a table at Toit tomorrow at 8pm on swiggy", NOW),
+                                                 NOW, "app")
+    assert proposal.restaurant["id"] == "R1" and proposal.deal["itemId"] == "R1-T3"
+
+
+def test_a_prose_booking_reply_gives_the_order_number() -> None:
+    desk = _chat_desk(ChatSwiggy())
+    proposal = desk.propose(parse_table_request("book a table at Toit tomorrow at 8pm on swiggy", NOW), NOW, "app")
+    assert desk.book(proposal).booking_ref == "900777"
+
+
+def test_a_booking_reply_without_an_order_number_never_claims_nothing_was_booked() -> None:
+    fake = ChatSwiggy()
+    fake.booked_text = "Your table request went through."
+    desk = _chat_desk(fake)
+    proposal = desk.propose(parse_table_request("book a table at Toit tomorrow at 8pm on swiggy", NOW), NOW, "app")
+    with pytest.raises(SwiggyFlowError, match="Check Upcoming bookings in the Swiggy app"):
+        desk.book(proposal)

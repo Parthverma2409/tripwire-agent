@@ -81,7 +81,7 @@ class Settings:
     notify_changes: bool = True
 
     #: Where Swiggy Dineout searches and books: an area and its PIN code,
-    #: turned into coordinates once through Swiggy's own geocoder.
+    #: turned into coordinates once (Swiggy's geocoder, else OpenStreetMap).
     dining_area: str = ""
     dining_pin: str = ""
 

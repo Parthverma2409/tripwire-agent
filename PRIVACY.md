@@ -26,6 +26,9 @@ Tripwire company. The developer never receives your data.
   free slots near the area you set, and to book a table only after you approve it. The
   Swiggy sign-in is stored encrypted like the Google one. Nothing from Gmail or your
   calendar is sent to Swiggy.
+- **OpenStreetMap (only for Swiggy tables).** To search Dineout near you, the dining area
+  and PIN code from Settings are looked up once on OpenStreetMap's Nominatim service and
+  the coordinates are kept locally. Nothing else is sent.
 - **Uber.** No connection. A ride's *Book in Uber* button opens Uber with the drop-off
   in the link; nothing is sent until you press it.
 - **Local AI (only if you turn it on).** Ollama runs on your own machine; nothing leaves it.
